@@ -95,6 +95,7 @@ function buildProfile(user, stats) {
   if (!user) return null;
   return {
     id: user.id || user.userId,
+    secUid: user.secUid || null,          // dùng để query video list
     username: user.uniqueId || user.nickname,
     nickname: user.nickname,
     bio: user.signature,
@@ -105,7 +106,65 @@ function buildProfile(user, stats) {
     following: parseInt(stats?.followingCount ?? 0),
     likes: parseInt(stats?.heartCount ?? stats?.heart ?? stats?.diggCount ?? 0),
     videoCount: parseInt(stats?.videoCount ?? 0),
+    totalViews: null,                     // sẽ được điền bởi fetchVideoViews()
   };
+}
+
+// ── Lấy tổng view từ danh sách video ──────────────────────────────────────
+/**
+ * Gọi TikTok private API để lấy danh sách video và cộng tổng play count.
+ * Không cần token — endpoint public nhưng cần đúng params.
+ * @param {string} secUid - secUid của user (lấy từ buildProfile)
+ * @param {number} [maxVideos=30] - Số video tối đa để tính (mặc định 30)
+ * @returns {Promise<number>} Tổng view count
+ */
+async function fetchVideoViews(secUid, maxVideos = 30) {
+  if (!secUid) throw new Error('secUid is required');
+
+  const params = new URLSearchParams({
+    secUid,
+    count: String(maxVideos),
+    cursor: '0',
+    sourceType: '8',
+    appId: '1233',
+    region: 'US',
+    priority_region: 'US',
+    language: 'en',
+  });
+
+  const url = `https://www.tiktok.com/api/post/item_list/?${params}`;
+
+  let resp;
+  try {
+    resp = await axios.get(url, {
+      timeout: 15_000,
+      headers: {
+        'User-Agent': randUA(),
+        'Referer': 'https://www.tiktok.com/',
+        'Accept': 'application/json, text/plain, */*',
+        'Accept-Language': 'en-US,en;q=0.9',
+      },
+    });
+  } catch (err) {
+    throw new Error(`fetchVideoViews thất bại: ${err.message}`);
+  }
+
+  const json = resp.data;
+
+  // API trả về { itemList: [...], hasMore, cursor, ... }
+  if (!json?.itemList || !Array.isArray(json.itemList)) {
+    // Nếu TikTok trả về lỗi hoặc cấu trúc khác, trả về 0 thay vì crash
+    console.warn('[fetchVideoViews] Không có itemList:', JSON.stringify(json).slice(0, 200));
+    return 0;
+  }
+
+  const total = json.itemList.reduce((sum, item) => {
+    const plays = parseInt(item?.stats?.playCount ?? item?.stats?.viewCount ?? 0);
+    return sum + plays;
+  }, 0);
+
+  console.log(`[fetchVideoViews] ${json.itemList.length} videos → tổng ${total.toLocaleString()} views`);
+  return total;
 }
 
 // ── Scrape bằng Playwright (primary) ──────────────────────────────────────
@@ -225,18 +284,29 @@ async function scrapeWithAxios(username) {
  * @param {string} username
  * @returns {Promise<Object>} Profile data
  */
-export async function fetchUserProfile(username) {
+export async function fetchUserProfile(username, { includeViews = false } = {}) {
   const clean = username.replace(/^@/, '').trim();
 
+  let profile;
   try {
-    return await scrapeWithBrowser(clean);
+    profile = await scrapeWithBrowser(clean);
   } catch (browserErr) {
-    // Nếu lỗi không phải PARSE_ERROR thì không cần thử axios
     if (browserErr.code === 'USER_NOT_FOUND') throw browserErr;
-
     console.warn(`[Browser] Thất bại (${browserErr.message}), thử axios fallback...`);
-    return scrapeWithAxios(clean);
+    profile = await scrapeWithAxios(clean);
   }
+
+  // Lấy thêm tổng view nếu được yêu cầu và account không private
+  if (includeViews && profile.secUid && !profile.privateAccount) {
+    try {
+      profile.totalViews = await fetchVideoViews(profile.secUid);
+    } catch (viewErr) {
+      console.warn(`[fetchUserProfile] Không lấy được totalViews: ${viewErr.message}`);
+      profile.totalViews = null;
+    }
+  }
+
+  return profile;
 }
 
 /**

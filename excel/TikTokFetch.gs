@@ -9,7 +9,7 @@
  * Chạy setupTriggers() 1 lần duy nhất để kích hoạt cả 3 trigger.
  *
  * Layout (1-indexed):
- *   C(3)=Followers  D(4)=Likes  E(5)=Videos  F(6)=Update  G(7)=Avatar
+ *   C(3)=Followers  D(4)=Likes  E(5)=Videos  F(6)=Views  G(7)=Avatar
  *   I(9)=Tình trạng  K(11)=Username
  */
 
@@ -21,12 +21,12 @@ var DATA_START_ROW = 2;
 
 var COL = {
   USERNAME: 11, // K
-  STATUS: 9, // I — Tình trạng
+  STATUS: 9,   // I — Tình trạng
   FOLLOWERS: 3, // C
-  LIKES: 4, // D
-  VIDEOS: 5, // E
-  UPDATED_AT: 6, // F
-  AVATAR: 7, // G
+  LIKES: 4,    // D
+  VIDEOS: 5,   // E
+  VIEWS: 6,    // F — Tổng view (30 video gần nhất)
+  AVATAR: 7,   // G
 };
 
 var SKIP_STATUSES = ["BỊ BAN", "Loại bảo mật", "Outr beta"];
@@ -168,7 +168,8 @@ function fetchSingleRow(sheet, row) {
   sheet.getRange(row, COL.FOLLOWERS).setValue("⏳");
   sheet.getRange(row, COL.LIKES).setValue("⏳");
   sheet.getRange(row, COL.VIDEOS).setValue("⏳");
-  sheet.getRange(row, COL.UPDATED_AT).setValue("⏳ Đang tải...");
+  sheet.getRange(row, COL.VIEWS).setValue("⏳");
+
   sheet.getRange(row, COL.AVATAR).setValue("⏳");
   SpreadsheetApp.flush();
 
@@ -179,10 +180,9 @@ function fetchSingleRow(sheet, row) {
     sheet.getRange(row, COL.FOLLOWERS).setValue(0);
     sheet.getRange(row, COL.LIKES).setValue(0);
     sheet.getRange(row, COL.VIDEOS).setValue(0);
+    sheet.getRange(row, COL.VIEWS).setValue(0);
     sheet.getRange(row, COL.AVATAR).setValue(0);
-    sheet
-      .getRange(row, COL.UPDATED_AT)
-      .setValue("❌ " + nowStr() + " — " + result.error);
+    sheet.getRange(row, COL.VIEWS).setValue("❌ " + result.error);
     Logger.log("  ❌ " + result.error);
     SpreadsheetApp.flush();
     return "error";
@@ -191,7 +191,8 @@ function fetchSingleRow(sheet, row) {
   sheet.getRange(row, COL.FOLLOWERS).setValue(result.followers);
   sheet.getRange(row, COL.LIKES).setValue(result.likes);
   sheet.getRange(row, COL.VIDEOS).setValue(result.videoCount);
-  sheet.getRange(row, COL.UPDATED_AT).setValue(nowStr());
+  sheet.getRange(row, COL.VIEWS).setValue(result.totalViews !== null ? result.totalViews : "N/A");
+
 
   if (result.avatarUrl) {
     var safeUrl = result.avatarUrl.replace(/"/g, "'");
@@ -206,10 +207,13 @@ function fetchSingleRow(sheet, row) {
   Logger.log(
     "  ✅ " +
       result.followers +
-      " | " +
+      " followers | " +
       result.likes +
-      " | " +
-      result.videoCount,
+      " likes | " +
+      result.videoCount +
+      " videos | " +
+      result.totalViews +
+      " views",
   );
   SpreadsheetApp.flush();
   return "success";
@@ -218,8 +222,9 @@ function fetchSingleRow(sheet, row) {
 // ─── API ───────────────────────────────────────────────────────────────────
 
 function callApi(username) {
+  // Dùng endpoint /profile?views=1 để lấy cả views trong 1 request
   var url =
-    API_BASE_URL + "/api/user/" + encodeURIComponent(username) + "/profile";
+    API_BASE_URL + "/api/user/" + encodeURIComponent(username) + "/profile?views=1";
   try {
     var response = UrlFetchApp.fetch(url, {
       method: "get",
@@ -243,6 +248,9 @@ function callApi(username) {
       followers: Number(json.data.followers || 0),
       likes: Number(json.data.likes || 0),
       videoCount: Number(json.data.videoCount || 0),
+      totalViews: json.data.totalViews !== null && json.data.totalViews !== undefined
+        ? Number(json.data.totalViews)
+        : null,
       avatarUrl: json.data.avatarUrl || "",
     };
   } catch (err) {

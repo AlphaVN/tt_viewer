@@ -9,6 +9,7 @@ import {
   getLikes,
   getVideoCount,
   getFullProfile,
+  getViews,
 } from '../controllers/user.controller.js';
 
 const router = Router();
@@ -55,8 +56,17 @@ router.get('/:username/videos', getVideoCount);
 /**
  * @route   GET /api/user/:username/profile
  * @desc    Lấy toàn bộ thông tin profile (followers + likes + videos + ...)
+ * @query   views=1  — bật tính năng lấy tổng view (chậm hơn ~1-2s)
  * @example GET /api/user/cristiano/profile
+ * @example GET /api/user/cristiano/profile?views=1
  */
 router.get('/:username/profile', getFullProfile);
+
+/**
+ * @route   GET /api/user/:username/views
+ * @desc    Lấy tổng số lượt xem (views) từ 30 video gần nhất
+ * @example GET /api/user/cristiano/views
+ */
+router.get('/:username/views', getViews);
 
 export default router;
