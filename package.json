@@ -1,0 +1,27 @@
+{
+  "name": "tiktok-user-api",
+  "version": "1.0.0",
+  "description": "REST API để tra cứu thông tin TikTok user (followers, likes, video count)",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "tunnel": "node start-with-tunnel.js",
+    "postinstall": "npx playwright install chromium"
+  },
+  "keywords": ["tiktok", "api", "scraper", "express"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.19.2",
+    "axios": "^1.7.0",
+    "dotenv": "^16.4.0",
+    "cors": "^2.8.5",
+    "helmet": "^7.1.0",
+    "express-rate-limit": "^7.4.0",
+    "playwright": "^1.42.0",
+    "playwright-extra": "^4.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2"
+  }
+}
