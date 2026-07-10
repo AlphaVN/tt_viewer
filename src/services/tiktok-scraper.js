@@ -1,324 +1,391 @@
 /**
- * TikTok Scraper — Playwright Edition
+ * TikTok profile service — HTTP-only edition.
  *
- * Dùng trình duyệt thật (Chromium headless) + stealth plugin
- * để bypass CAPTCHA và các cơ chế chống bot của TikTok.
- *
- * Chiến lược:
- * 1. Singleton browser: chỉ mở 1 lần, dùng lại cho mọi request
- * 2. Mỗi request = 1 BrowserContext riêng (cookies độc lập)
- * 3. Stealth plugin: vô hiệu hoá các fingerprint bot phổ biến
- * 4. Fallback axios: nếu browser chưa khởi động hoặc lỗi cold-start
+ * Chromium is deliberately not used: profile data and recent public posts are
+ * fetched as JSON through a lightweight HTTP provider. Provider requests are
+ * serialized because the public endpoint allows roughly one request/second.
  */
 
-import { chromium } from 'playwright-extra';
-import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import axios from 'axios';
 
-// ── Stealth setup ──────────────────────────────────────────────────────────
-chromium.use(StealthPlugin());
+const DEFAULT_PROVIDER_URL = 'https://www.tikwm.com';
+const DEFAULT_REQUEST_INTERVAL_MS = 1_100;
+const DEFAULT_VIEWS_LIMIT = 30;
+const MAX_VIEWS_LIMIT = 35;
 
-// ── Browser singleton ──────────────────────────────────────────────────────
-let _browser = null;
-let _browserStarting = false;
-
-const BROWSER_ARGS = [
-  '--no-sandbox',
-  '--disable-setuid-sandbox',
-  '--disable-dev-shm-usage',        // Render / Docker friendly
-  '--disable-gpu',
-  '--disable-blink-features=AutomationControlled',
-  '--window-size=1280,800',
-];
-
-async function getBrowser() {
-  if (_browser && _browser.isConnected()) return _browser;
-
-  // Chờ nếu đang khởi động (tránh race condition)
-  if (_browserStarting) {
-    await new Promise(r => setTimeout(r, 500));
-    return getBrowser();
-  }
-
-  _browserStarting = true;
-  try {
-    console.log('[Browser] Khởi động Chromium...');
-    _browser = await chromium.launch({
-      headless: true,
-      args: BROWSER_ARGS,
-    });
-    _browser.on('disconnected', () => {
-      console.log('[Browser] Bị đóng, sẽ khởi động lại khi cần.');
-      _browser = null;
-    });
-    console.log('[Browser] Chromium sẵn sàng ✓');
-  } catch (err) {
-    _browserStarting = false;
-    if (err.message?.includes("Executable doesn't exist")) {
-      console.error('[Browser] Thất bại: Chromium binary chưa được cài.');
-      console.error('[Browser] Chạy lệnh sau để cài: npx playwright install chromium --with-deps');
-      const e = new Error('Chromium chưa cài. Chạy: npx playwright install chromium --with-deps');
-      e.code = 'BROWSER_NOT_INSTALLED';
-      e.status = 503;
-      throw e;
-    }
-    console.error('[Browser] Thất bại:', err.message);
-    throw err;
-  } finally {
-    _browserStarting = false;
-  }
-  return _browser;
+function intFromEnv(name, fallback, min, max) {
+  const value = Number.parseInt(process.env[name] ?? '', 10);
+  if (!Number.isFinite(value)) return fallback;
+  return Math.min(Math.max(value, min), max);
 }
 
-// ── User-Agents ────────────────────────────────────────────────────────────
-const USER_AGENTS = [
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0',
-];
-const randUA = () => USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
+const PROVIDER_URL = (process.env.TIKTOK_HTTP_API_URL || DEFAULT_PROVIDER_URL).replace(/\/$/, '');
+const REQUEST_INTERVAL_MS = intFromEnv(
+  'TIKTOK_REQUEST_INTERVAL_MS',
+  DEFAULT_REQUEST_INTERVAL_MS,
+  250,
+  10_000,
+);
+const PROVIDER_RETRIES = intFromEnv('TIKTOK_HTTP_RETRIES', 3, 1, 5);
+const VIEWS_LIMIT = intFromEnv('TIKTOK_VIEWS_LIMIT', DEFAULT_VIEWS_LIMIT, 1, MAX_VIEWS_LIMIT);
 
-// ── Parse dữ liệu từ JSON blob TikTok inject vào trang ────────────────────
+const USER_AGENTS = [
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
+];
+
+const http = axios.create({
+  baseURL: PROVIDER_URL,
+  timeout: 20_000,
+  maxRedirects: 5,
+  maxContentLength: 5 * 1024 * 1024,
+  headers: {
+    Accept: 'application/json',
+    'Accept-Language': 'en-US,en;q=0.9',
+  },
+});
+
+let providerQueue = Promise.resolve();
+let lastProviderRequestAt = 0;
+
+const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+function serviceError(message, code, status, details) {
+  const error = new Error(message);
+  error.code = code;
+  error.status = status;
+  if (details) error.details = details;
+  return error;
+}
+
+function accountNotFoundError(username) {
+  return serviceError(
+    `Không tìm thấy tài khoản @${username} hoặc tài khoản đã bị vô hiệu hóa.`,
+    'USER_NOT_FOUND',
+    404,
+    {
+      accountHealth: {
+        status: 'NOT_FOUND',
+        label: 'KHÔNG TÌM THẤY',
+        isAccessible: false,
+        isPublic: false,
+        canReadViews: false,
+        reason: 'TikTok không còn trả về hồ sơ công khai cho username này.',
+        checkedAt: new Date().toISOString(),
+      },
+    },
+  );
+}
+
+/**
+ * Serialize calls to the provider to avoid its one-request/second free limit.
+ * A rejected task does not break the queue for later requests.
+ */
+function scheduleProviderRequest(task) {
+  const run = providerQueue.then(async () => {
+    const elapsed = Date.now() - lastProviderRequestAt;
+    if (elapsed < REQUEST_INTERVAL_MS) {
+      await wait(REQUEST_INTERVAL_MS - elapsed);
+    }
+    lastProviderRequestAt = Date.now();
+    return task();
+  });
+
+  providerQueue = run.catch(() => undefined);
+  return run;
+}
+
+function isInvalidUsernameMessage(message) {
+  return /unique[_ ]?id.*invalid|user.*(?:not found|does not exist)|account.*not found/i.test(message);
+}
+
+function isRetryableProviderMessage(message) {
+  return /limit|too many|busy|timeout|temporar|try again|system error|network/i.test(message);
+}
+
+async function providerGet(path, params, { username } = {}) {
+  let lastError;
+
+  for (let attempt = 1; attempt <= PROVIDER_RETRIES; attempt += 1) {
+    try {
+      const response = await scheduleProviderRequest(() => http.get(path, {
+        params,
+        headers: {
+          'User-Agent': USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)],
+        },
+      }));
+      const payload = response.data;
+
+      if (Number(payload?.code) === 0 && payload?.data) {
+        return payload.data;
+      }
+
+      const providerMessage = String(payload?.msg || 'Provider trả về dữ liệu không hợp lệ.');
+      if (username && isInvalidUsernameMessage(providerMessage)) {
+        throw accountNotFoundError(username);
+      }
+
+      lastError = serviceError(
+        `Nguồn dữ liệu TikTok từ chối yêu cầu: ${providerMessage}`,
+        'PROVIDER_ERROR',
+        503,
+      );
+
+      if (!isRetryableProviderMessage(providerMessage)) break;
+    } catch (error) {
+      if (error.code === 'USER_NOT_FOUND') throw error;
+
+      const httpStatus = error.response?.status;
+      lastError = serviceError(
+        `Không kết nối được nguồn dữ liệu TikTok: ${error.message}`,
+        'PROVIDER_UNAVAILABLE',
+        503,
+      );
+
+      if (httpStatus && httpStatus < 500 && httpStatus !== 408 && httpStatus !== 429) {
+        break;
+      }
+    }
+
+    if (attempt < PROVIDER_RETRIES) {
+      await wait(Math.min(500 * (2 ** (attempt - 1)), 2_000));
+    }
+  }
+
+  throw lastError || serviceError(
+    'Nguồn dữ liệu TikTok tạm thời không khả dụng.',
+    'PROVIDER_UNAVAILABLE',
+    503,
+  );
+}
+
+function nonNegativeInt(value) {
+  const parsed = Number.parseInt(value ?? 0, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+}
+
+function createAccountHealth(profile, { viewsChecked = false, lastVideoAt = null } = {}) {
+  let status = 'ACTIVE';
+  let label = 'HOẠT ĐỘNG';
+  let reason = 'Hồ sơ công khai truy cập được.';
+
+  if (profile.privateAccount) {
+    status = 'ACTIVE_PRIVATE';
+    label = 'HOẠT ĐỘNG (RIÊNG TƯ)';
+    reason = 'Tài khoản tồn tại nhưng đang ở chế độ riêng tư.';
+  } else if (profile.videoCount === 0) {
+    status = 'ACTIVE_NO_VIDEOS';
+    label = 'HOẠT ĐỘNG (CHƯA CÓ VIDEO)';
+    reason = 'Tài khoản tồn tại và công khai nhưng chưa có video công khai.';
+  }
+
+  return {
+    status,
+    label,
+    isAccessible: true,
+    isPublic: !profile.privateAccount,
+    canReadViews: profile.privateAccount
+      ? false
+      : profile.videoCount === 0 || viewsChecked
+        ? true
+        : null,
+    reason,
+    lastVideoAt,
+    checkedAt: new Date().toISOString(),
+  };
+}
+
+function buildProfile(user, stats, source = 'tikwm') {
+  if (!user?.uniqueId && !user?.id) return null;
+
+  const profile = {
+    id: user.id || user.userId || null,
+    secUid: user.secUid || null,
+    username: user.uniqueId || user.nickname,
+    nickname: user.nickname || user.uniqueId,
+    bio: user.signature || '',
+    verified: Boolean(user.verified),
+    privateAccount: Boolean(user.privateAccount ?? user.secret),
+    avatarUrl: user.avatarMedium || user.avatarLarger || user.avatarThumb || null,
+    followers: nonNegativeInt(stats?.followerCount ?? stats?.fans),
+    following: nonNegativeInt(stats?.followingCount),
+    likes: nonNegativeInt(stats?.heartCount ?? stats?.heart ?? stats?.diggCount),
+    videoCount: nonNegativeInt(stats?.videoCount),
+    totalViews: null,
+    viewsVideoCount: 0,
+    viewsLimit: VIEWS_LIMIT,
+    viewsScope: 'not_requested',
+    dataSource: source,
+  };
+
+  profile.accountHealth = createAccountHealth(profile);
+  return profile;
+}
+
 function parseUniversalData(data) {
   if (!data) return null;
 
-  // Path 1: __DEFAULT_SCOPE__ → webapp.user-detail
-  try {
-    const scope = data.__DEFAULT_SCOPE__;
-    const userInfo = scope?.['webapp.user-detail']?.userInfo;
-    if (userInfo) return buildProfile(userInfo.user, userInfo.stats ?? userInfo.statsV2);
-  } catch { /* tiếp tục */ }
+  const userInfo = data.__DEFAULT_SCOPE__?.['webapp.user-detail']?.userInfo;
+  if (userInfo?.user) {
+    return buildProfile(userInfo.user, userInfo.stats ?? userInfo.statsV2, 'tiktok-html');
+  }
 
-  // Path 2: UserModule (old format)
-  try {
-    for (const key of Object.keys(data)) {
-      const mod = data[key]?.UserModule;
-      if (mod?.users) {
-        const uname = Object.keys(mod.users)[0];
-        if (uname) return buildProfile(mod.users[uname], mod.stats?.[uname]);
-      }
-    }
-  } catch { /* tiếp tục */ }
+  for (const value of Object.values(data)) {
+    const module = value?.UserModule;
+    if (!module?.users) continue;
+    const username = Object.keys(module.users)[0];
+    if (username) return buildProfile(module.users[username], module.stats?.[username], 'tiktok-html');
+  }
 
   return null;
 }
 
-function buildProfile(user, stats) {
-  if (!user) return null;
-  return {
-    id: user.id || user.userId,
-    secUid: user.secUid || null,          // dùng để query video list
-    username: user.uniqueId || user.nickname,
-    nickname: user.nickname,
-    bio: user.signature,
-    verified: user.verified || false,
-    privateAccount: user.privateAccount || false,
-    avatarUrl: user.avatarMedium || user.avatarThumb || null,
-    followers: parseInt(stats?.followerCount ?? stats?.fans ?? 0),
-    following: parseInt(stats?.followingCount ?? 0),
-    likes: parseInt(stats?.heartCount ?? stats?.heart ?? stats?.diggCount ?? 0),
-    videoCount: parseInt(stats?.videoCount ?? 0),
-    totalViews: null,                     // sẽ được điền bởi fetchVideoViews()
-  };
-}
-
-
-// ── Scrape bằng Playwright (primary) ──────────────────────────────────────
-async function scrapeWithBrowser(username, includeViews = false) {
-  const url = `https://www.tiktok.com/@${username}`;
-  const browser = await getBrowser();
-
-  const context = await browser.newContext({
-    userAgent: randUA(),
-    locale: 'en-US',
-    timezoneId: 'America/New_York',
-    viewport: { width: 1280, height: 800 },
-    extraHTTPHeaders: {
-      'Accept-Language': 'en-US,en;q=0.9',
-    },
-  });
-
-  const page = await context.newPage();
-
-  // Stealth script
-  await page.addInitScript(() => {
-    Object.defineProperty(navigator, 'webdriver', { get: () => false });
-    window.chrome = { runtime: {} };
-    Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
-  });
-
-  try {
-    const resp = await page.goto(url, {
-      waitUntil: 'domcontentloaded',
-      timeout: 30_000,
-    });
-
-    if (resp?.status() === 404) {
-      const e = new Error(`User @${username} not found`);
-      e.code = 'USER_NOT_FOUND'; e.status = 404;
-      throw e;
-    }
-
-    // Chờ JS render xong
-    await page.waitForTimeout(2500);
-
-    // Trích xuất JSON blob profile
-    const raw = await page.evaluate(() => {
-      const el = document.getElementById('__UNIVERSAL_DATA_FOR_REHYDRATION__');
-      return el ? el.textContent : null;
-    });
-
-    if (!raw) {
-      const bodyText = await page.evaluate(() => document.body?.innerText?.slice(0, 200));
-      console.warn('[Browser] Page text:', bodyText);
-      const e = new Error('Không trích xuất được dữ liệu. Có thể TikTok đang block IP.');
-      e.code = 'PARSE_ERROR'; e.status = 429;
-      throw e;
-    }
-
-    const profile = parseUniversalData(JSON.parse(raw));
-    if (!profile) {
-      const e = new Error('Cấu trúc dữ liệu TikTok không nhận dạng được.');
-      e.code = 'PARSE_ERROR'; e.status = 500;
-      throw e;
-    }
-
-    console.log(`[scrapeWithBrowser] includeViews=${includeViews} | secUid=${profile.secUid} | privateAccount=${profile.privateAccount}`);
-
-    if (includeViews && !profile.privateAccount) {
-      try {
-        profile.totalViews = await scrapeViewsFromDOM(page);
-      } catch (viewErr) {
-        console.warn('[scrapeWithBrowser] Không scrape được views từ DOM:', viewErr.message);
-      }
-    }
-
-    return profile;
-  } finally {
-    await context.close();
-  }
-}
-
-/**
- * Lấy tổng views từ itemList trong __UNIVERSAL_DATA_FOR_REHYDRATION__
- * TikTok nhúng một số video đầu vào đây — thử đọc sau khi trang load xong.
- */
-async function scrapeViewsFromDOM(page) {
-  // Chờ network idle để TikTok có thể đã fetch thêm dữ liệu
-  try {
-    await page.waitForLoadState('networkidle', { timeout: 8000 });
-  } catch { /* timeout OK */ }
-
-  // Re-read UNIVERSAL_DATA sau khi JS đã chạy thêm
-  const raw = await page.evaluate(() => {
-    const el = document.getElementById('__UNIVERSAL_DATA_FOR_REHYDRATION__');
-    return el ? el.textContent : null;
-  });
-  if (!raw) return null;
-
-  try {
-    const data = JSON.parse(raw);
-    const userDetail = data?.__DEFAULT_SCOPE__?.['webapp.user-detail'];
-    const itemList = userDetail?.userInfo?.itemList;
-
-    if (Array.isArray(itemList) && itemList.length > 0) {
-      const total = itemList.reduce((sum, item) => {
-        const plays = parseInt(
-          item?.stats?.playCount ?? item?.stats?.viewCount ?? item?.statsV2?.playCount ?? 0,
-          10
-        );
-        return sum + plays;
-      }, 0);
-      console.log(`[DOM scrape] itemList=${itemList.length} items → tổng ${total.toLocaleString()} views`);
-      return total;
-    }
-
-    console.warn(`[DOM scrape] itemList rỗng (length=${itemList?.length ?? 'N/A'}) — TikTok không trả data cho headless browser`);
-    return null;
-  } catch (e) {
-    console.warn('[DOM scrape] Parse lỗi:', e.message);
-    return null;
-  }
-}
-
-// ── Fallback axios (dùng nếu browser chưa warm-up) ────────────────────────
-async function scrapeWithAxios(username) {
-  const url = `https://www.tiktok.com/@${username}`;
-  let resp;
-  try {
-    resp = await axios.get(url, {
-      timeout: 15_000,
-      headers: {
-        'User-Agent': randUA(),
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Cache-Control': 'no-cache',
-      },
-      maxRedirects: 5,
-    });
-  } catch (err) {
-    if (err.response?.status === 404) {
-      const e = new Error(`User @${username} not found`);
-      e.code = 'USER_NOT_FOUND'; e.status = 404;
-      throw e;
-    }
-    const e = new Error(`Fetch thất bại: ${err.message}`);
-    e.code = 'FETCH_ERROR'; e.status = 503;
-    throw e;
-  }
-
-  const html = resp.data;
-  const match = html.match(/<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__"[^>]*>([^<]+)<\/script>/);
-  if (!match) {
-    const e = new Error('CAPTCHA hoặc không có dữ liệu (axios fallback).');
-    e.code = 'PARSE_ERROR'; e.status = 429;
-    throw e;
-  }
-
-  const profile = parseUniversalData(JSON.parse(match[1]));
+async function fetchProfileFromProvider(username) {
+  const data = await providerGet('/api/user/info', { unique_id: username }, { username });
+  const profile = buildProfile(data.user, data.stats);
   if (!profile) {
-    const e = new Error('Cấu trúc dữ liệu không nhận dạng được.');
-    e.code = 'PARSE_ERROR'; e.status = 500;
-    throw e;
+    throw serviceError(
+      'Nguồn dữ liệu trả về hồ sơ không đầy đủ.',
+      'INVALID_PROVIDER_DATA',
+      502,
+    );
   }
   return profile;
 }
 
-// ── Public API ─────────────────────────────────────────────────────────────
 /**
- * Lấy thông tin profile TikTok user
- * Thử browser trước, nếu lỗi thử axios
- * @param {string} username
- * @returns {Promise<Object>} Profile data
+ * Best-effort fallback for profile fields only. This still uses plain HTTP and
+ * never launches a browser. Recent views continue to come from the JSON API.
+ */
+async function fetchProfileFromTikTokHtml(username) {
+  let response;
+  try {
+    response = await axios.get(`https://www.tiktok.com/@${encodeURIComponent(username)}`, {
+      timeout: 15_000,
+      maxRedirects: 5,
+      headers: {
+        'User-Agent': USER_AGENTS[0],
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Cache-Control': 'no-cache',
+      },
+    });
+  } catch (error) {
+    if (error.response?.status === 404) throw accountNotFoundError(username);
+    throw serviceError(
+      `Không tải được hồ sơ TikTok: ${error.message}`,
+      'FETCH_ERROR',
+      503,
+    );
+  }
+
+  const html = String(response.data || '');
+  const match = html.match(
+    /<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__"[^>]*>([\s\S]*?)<\/script>/,
+  );
+  if (!match) {
+    throw serviceError(
+      'TikTok không trả về dữ liệu hồ sơ qua HTTP.',
+      'PARSE_ERROR',
+      503,
+    );
+  }
+
+  try {
+    const profile = parseUniversalData(JSON.parse(match[1]));
+    if (profile) return profile;
+  } catch (error) {
+    throw serviceError(`Không đọc được dữ liệu hồ sơ: ${error.message}`, 'PARSE_ERROR', 502);
+  }
+
+  throw serviceError('Cấu trúc hồ sơ TikTok không nhận dạng được.', 'PARSE_ERROR', 502);
+}
+
+async function fetchRecentViews(username, limit = VIEWS_LIMIT) {
+  const data = await providerGet('/api/user/posts', {
+    unique_id: username,
+    count: limit,
+    cursor: 0,
+  }, { username });
+
+  const videos = Array.isArray(data.videos) ? data.videos.slice(0, limit) : [];
+  if (videos.some(video => !Number.isFinite(Number(video?.play_count)))) {
+    throw serviceError(
+      'Một số video không có trường play_count.',
+      'INVALID_VIEWS_DATA',
+      502,
+    );
+  }
+
+  const totalViews = videos.reduce(
+    (total, video) => total + nonNegativeInt(video.play_count),
+    0,
+  );
+  const newestCreateTime = videos.reduce(
+    (newest, video) => Math.max(newest, nonNegativeInt(video.create_time)),
+    0,
+  );
+
+  return {
+    totalViews,
+    videoCount: videos.length,
+    lastVideoAt: newestCreateTime ? new Date(newestCreateTime * 1_000).toISOString() : null,
+  };
+}
+
+/**
+ * Fetch a TikTok profile and optionally sum views from recent public videos.
  */
 export async function fetchUserProfile(username, { includeViews = false } = {}) {
   const clean = username.replace(/^@/, '').trim();
 
   let profile;
   try {
-    // Truyền includeViews vào browser để lấy views trong cùng context
-    profile = await scrapeWithBrowser(clean, includeViews);
-  } catch (browserErr) {
-    if (browserErr.code === 'USER_NOT_FOUND') throw browserErr;
-    console.warn(`[Browser] Thất bại (${browserErr.message}), thử axios fallback...`);
-    // axios fallback không hỗ trợ views (không có cookies)
-    profile = await scrapeWithAxios(clean);
-    // Axios fallback không có cookies → không lấy được views
-    // Giữ totalViews = null để client biết là chưa fetch được (khác với 0 view thật)
+    profile = await fetchProfileFromProvider(clean);
+  } catch (providerError) {
+    if (providerError.code === 'USER_NOT_FOUND') throw providerError;
+    console.warn(`[TikTok HTTP] Provider profile lỗi (${providerError.message}); thử HTML fallback.`);
+    profile = await fetchProfileFromTikTokHtml(clean);
   }
 
+  if (!includeViews) return profile;
+
+  if (profile.privateAccount) {
+    profile.viewsScope = 'unavailable_private_account';
+    profile.accountHealth = createAccountHealth(profile, { viewsChecked: false });
+    return profile;
+  }
+
+  if (profile.videoCount === 0) {
+    profile.totalViews = 0;
+    profile.viewsScope = 'recent_public_videos';
+    profile.accountHealth = createAccountHealth(profile, { viewsChecked: true });
+    return profile;
+  }
+
+  const views = await fetchRecentViews(clean);
+  if (views.videoCount === 0) {
+    throw serviceError(
+      'Tài khoản có video nhưng nguồn dữ liệu không trả về danh sách video công khai.',
+      'VIEWS_UNAVAILABLE',
+      503,
+    );
+  }
+
+  profile.totalViews = views.totalViews;
+  profile.viewsVideoCount = views.videoCount;
+  profile.viewsScope = 'recent_public_videos';
+  profile.accountHealth = createAccountHealth(profile, {
+    viewsChecked: true,
+    lastVideoAt: views.lastVideoAt,
+  });
   return profile;
 }
 
-/**
- * Warm-up browser khi server khởi động
- * Gọi hàm này 1 lần để Chromium đã sẵn sàng cho request đầu tiên
- */
-export async function warmUpBrowser() {
-  try {
-    await getBrowser();
-    console.log('[Browser] Warm-up hoàn tất.');
-  } catch (err) {
-    console.error('[Browser] Warm-up thất bại:', err.message);
-  }
-}
+export const scraperConfig = Object.freeze({
+  providerUrl: PROVIDER_URL,
+  requestIntervalMs: REQUEST_INTERVAL_MS,
+  retries: PROVIDER_RETRIES,
+  viewsLimit: VIEWS_LIMIT,
+  browserEnabled: false,
+});

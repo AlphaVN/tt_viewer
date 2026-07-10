@@ -3,7 +3,7 @@ services:
     name: tiktok-user-api
     runtime: node
     plan: starter
-    buildCommand: npm install && npx playwright install-deps chromium && npx playwright install chromium
+    buildCommand: npm ci --omit=dev
     startCommand: npm start
     envVars:
       - key: NODE_ENV

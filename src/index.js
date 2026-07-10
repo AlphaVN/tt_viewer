@@ -5,7 +5,7 @@
 
 import 'dotenv/config';
 import app from './app.js';
-import { warmUpBrowser } from './services/tiktok-scraper.js';
+import { scraperConfig } from './services/tiktok-scraper.js';
 
 const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
@@ -22,14 +22,14 @@ const server = app.listen(PORT, HOST, () => {
   console.log('║  GET /api/user/:username/likes           ║');
   console.log('║  GET /api/user/:username/videos          ║');
   console.log('║  GET /api/user/:username/profile         ║');
+  console.log('║  GET /api/user/:username/views           ║');
+  console.log('║  GET /api/user/:username/health          ║');
   console.log('╠══════════════════════════════════════════╣');
   console.log('║  Docs:   GET /                           ║');
   console.log('║  Health: GET /health                     ║');
   console.log('╚══════════════════════════════════════════╝');
   console.log('');
-
-  // Khởi động Chromium ngay khi server start (background, không block)
-  warmUpBrowser().catch(() => {});
+  console.log(`[TikTok HTTP] Browser: OFF | Views limit: ${scraperConfig.viewsLimit}`);
 });
 
 // Graceful shutdown

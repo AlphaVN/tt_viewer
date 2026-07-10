@@ -8,6 +8,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import * as cache from './services/cache.js';
+import { scraperConfig } from './services/tiktok-scraper.js';
 import userRoutes from './routes/user.routes.js';
 
 const app = express();
@@ -43,8 +44,8 @@ app.use('/api/', limiter);
 app.get('/', (req, res) => {
   res.json({
     name: 'TikTok User API',
-    version: '1.0.0',
-    description: 'REST API to fetch TikTok user stats (followers, likes, video count)',
+    version: '1.1.0',
+    description: 'REST API lấy thống kê, recent views và trạng thái tài khoản TikTok qua HTTP',
     endpoints: [
       {
         method: 'GET',
@@ -67,13 +68,25 @@ app.get('/', (req, res) => {
       {
         method: 'GET',
         path: '/api/user/:username/profile',
-        description: 'Lấy toàn bộ thông tin profile',
-        example: '/api/user/cristiano/profile',
+        description: 'Lấy profile; thêm ?views=1 để tính recent views',
+        example: '/api/user/tiktok/profile?views=1',
+      },
+      {
+        method: 'GET',
+        path: '/api/user/:username/views',
+        description: 'Tổng view các video công khai gần nhất',
+        example: '/api/user/tiktok/views',
+      },
+      {
+        method: 'GET',
+        path: '/api/user/:username/health',
+        description: 'Trạng thái truy cập của tài khoản',
+        example: '/api/user/tiktok/health',
       },
     ],
-    cache: {
-      description: 'Kết quả được cache 5 phút để tránh spam TikTok',
-      ttl: '5 minutes',
+    runtime: {
+      browserEnabled: scraperConfig.browserEnabled,
+      viewsLimit: scraperConfig.viewsLimit,
     },
   });
 });
@@ -87,6 +100,11 @@ app.get('/health', (req, res) => {
     status: 'ok',
     uptime: process.uptime(),
     cache: cache.stats(),
+    scraper: {
+      browserEnabled: scraperConfig.browserEnabled,
+      mode: 'http-json',
+      viewsLimit: scraperConfig.viewsLimit,
+    },
     timestamp: new Date().toISOString(),
   });
 });

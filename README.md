@@ -1,212 +1,138 @@
 # TikTok User API
 
-REST API để tra cứu thông tin TikTok user — **không cần API key**, scrape trực tiếp từ trang profile TikTok.
+API Node.js nhẹ để lấy thống kê profile TikTok, tổng view của các video công
+khai gần nhất và trạng thái truy cập của tài khoản.
 
-## 🚀 Khởi động
+API **không dùng Chromium/Playwright**. Dữ liệu được lấy qua HTTP JSON, các
+request ra nguồn dữ liệu được xếp hàng và retry để phù hợp với server ít RAM.
+
+## Khởi động
+
+Yêu cầu Node.js 18 trở lên.
 
 ```bash
-# Cài dependencies
-npm install
-
-# Tạo file .env
+npm ci
 cp .env.example .env
-
-# Chạy development (auto-reload)
-npm run dev
-
-# Hoặc production
 npm start
 ```
 
-## 📡 Các API Endpoints
+Mặc định server chạy tại `http://localhost:3000`.
 
-Base URL: `http://localhost:3000`
+## Endpoints
 
-### 1. Lấy số Followers
+| Method | Path | Dữ liệu |
+| --- | --- | --- |
+| GET | `/api/user/:username/followers` | Followers |
+| GET | `/api/user/:username/likes` | Tổng likes |
+| GET | `/api/user/:username/videos` | Số video |
+| GET | `/api/user/:username/profile` | Toàn bộ profile + sức khỏe tài khoản |
+| GET | `/api/user/:username/profile?views=1` | Profile + recent views |
+| GET | `/api/user/:username/views` | Recent views + phạm vi tính |
+| GET | `/api/user/:username/health` | Sức khỏe/trạng thái truy cập tài khoản |
+| GET | `/health` | Health check của server |
 
-```
-GET /api/user/:username/followers
-```
-
-**Ví dụ:**
+Ví dụ:
 
 ```bash
-curl http://localhost:3000/api/user/cristiano/followers
+curl "http://localhost:3000/api/user/tiktok/profile?views=1"
 ```
 
-**Response:**
+Response rút gọn:
 
 ```json
 {
   "success": true,
   "data": {
-    "username": "cristiano",
-    "followers": 82300000
-  },
-  "meta": {
-    "timestamp": "2024-07-09T03:00:00.000Z",
-    "fromCache": false
+    "username": "tiktok",
+    "followers": 94757116,
+    "likes": 461573652,
+    "videoCount": 1547,
+    "totalViews": 272340735,
+    "viewsVideoCount": 30,
+    "viewsLimit": 30,
+    "viewsScope": "recent_public_videos",
+    "accountHealth": {
+      "status": "ACTIVE",
+      "label": "HOẠT ĐỘNG",
+      "isAccessible": true,
+      "isPublic": true,
+      "canReadViews": true,
+      "lastVideoAt": "2026-07-08T01:02:43.000Z"
+    }
   }
 }
 ```
 
----
+### Ý nghĩa `totalViews`
 
-### 2. Lấy tổng số Likes
+TikTok không hiển thị một chỉ số tổng view toàn tài khoản trên profile.
+`totalViews` của API này là tổng `play_count` của tối đa 30 video công khai gần
+nhất. Response luôn kèm `viewsVideoCount`, `viewsLimit` và `viewsScope` để không
+nhầm với số all-time. Có thể đổi giới hạn bằng `TIKTOK_VIEWS_LIMIT` (tối đa 35
+cho mỗi lần gọi nguồn dữ liệu hiện tại).
 
-```
-GET /api/user/:username/likes
-```
+Nếu tài khoản private, `totalViews` là `null` và trạng thái là
+`ACTIVE_PRIVATE`; API không ghi số 0 giả. Nếu tài khoản công khai có video nhưng
+nguồn không trả danh sách video, request trả lỗi thay vì báo tổng view bằng 0.
 
-**Ví dụ:**
+### Trạng thái sức khỏe tài khoản
+
+| `status` | `label` | Ý nghĩa |
+| --- | --- | --- |
+| `ACTIVE` | `HOẠT ĐỘNG` | Profile công khai truy cập được |
+| `ACTIVE_PRIVATE` | `HOẠT ĐỘNG (RIÊNG TƯ)` | Tài khoản tồn tại nhưng private |
+| `ACTIVE_NO_VIDEOS` | `HOẠT ĐỘNG (CHƯA CÓ VIDEO)` | Tài khoản tồn tại, chưa có video công khai |
+| `NOT_FOUND` | `KHÔNG TÌM THẤY` | Username không tồn tại hoặc profile đã bị vô hiệu hóa |
+
+Đây là trạng thái quan sát được từ dữ liệu công khai, không phải thông tin vi
+phạm nội bộ hay “account check” trong ứng dụng TikTok.
+
+Với tài khoản không tồn tại, lỗi `404 USER_NOT_FOUND` vẫn kèm
+`error.details.accountHealth`, nhờ đó Google Sheet có thể cập nhật cột tình
+trạng chính xác.
+
+## Google Sheet
+
+File [excel/TikTokFetch.gs](excel/TikTokFetch.gs) dùng bố cục:
+
+- C: followers
+- D: likes
+- E: số video
+- F: recent views
+- G: avatar
+- I: tình trạng/sức khỏe tài khoản
+- K: username
+
+Đặt `API_BASE_URL` trong file rồi chạy `setupTriggers()` một lần. Script sẽ:
+
+- ghi `accountHealth.label` vào cột I;
+- kiểm tra lại tài khoản từng được đánh dấu không tồn tại;
+- giữ nguyên dữ liệu cũ khi chỉ gặp lỗi mạng/provider;
+- chỉ ghi số 0 khi API xác nhận `USER_NOT_FOUND`.
+
+## Cấu hình
+
+| Biến | Mặc định | Mô tả |
+| --- | --- | --- |
+| `PORT` | `3000` | Port lắng nghe |
+| `TIKTOK_HTTP_API_URL` | `https://www.tikwm.com` | HTTP JSON provider |
+| `TIKTOK_REQUEST_INTERVAL_MS` | `1100` | Khoảng cách tối thiểu giữa hai request provider |
+| `TIKTOK_HTTP_RETRIES` | `3` | Số lần thử lại, từ 1 đến 5 |
+| `TIKTOK_VIEWS_LIMIT` | `30` | Số video gần nhất dùng để cộng view, tối đa 35 |
+| `HTTPS_PROXY` | trống | Proxy HTTP(S) tùy chọn |
+
+Không giảm `TIKTOK_REQUEST_INTERVAL_MS` nếu dùng endpoint miễn phí; provider có
+thể trả lỗi giới hạn tần suất.
+
+## Deploy Render
+
+`render.yaml` chỉ chạy `npm ci --omit=dev`; không tải browser binary hoặc system
+dependencies. Health check là `/health`.
+
+## Kiểm thử
 
 ```bash
-curl http://localhost:3000/api/user/cristiano/likes
+npm test
 ```
 
-**Response:**
-
-```json
-{
-  "success": true,
-  "data": {
-    "username": "cristiano",
-    "likes": 420000000
-  },
-  "meta": {
-    "timestamp": "2024-07-09T03:00:00.000Z",
-    "fromCache": true,
-    "cachedAt": "2024-07-09T02:59:00.000Z"
-  }
-}
-```
-
----
-
-### 3. Lấy số lượng Video
-
-```
-GET /api/user/:username/videos
-```
-
-**Ví dụ:**
-
-```bash
-curl http://localhost:3000/api/user/cristiano/videos
-```
-
-**Response:**
-
-```json
-{
-  "success": true,
-  "data": {
-    "username": "cristiano",
-    "videoCount": 312
-  },
-  "meta": {
-    "timestamp": "2024-07-09T03:00:00.000Z",
-    "fromCache": true
-  }
-}
-```
-
----
-
-### 4. Lấy toàn bộ thông tin Profile
-
-```
-GET /api/user/:username/profile
-```
-
-**Ví dụ:**
-
-```bash
-curl http://localhost:3000/api/user/cristiano/profile
-```
-
-**Response:**
-
-```json
-{
-  "success": true,
-  "data": {
-    "id": "6820082583",
-    "username": "cristiano",
-    "nickname": "Cristiano Ronaldo",
-    "bio": "⚽️",
-    "verified": true,
-    "privateAccount": false,
-    "avatarUrl": "https://p16-sign-va.tiktokcdn.com/...",
-    "followers": 82300000,
-    "following": 5,
-    "likes": 420000000,
-    "videoCount": 312,
-    "friendCount": 0
-  },
-  "meta": {
-    "timestamp": "2024-07-09T03:00:00.000Z",
-    "fromCache": false
-  }
-}
-```
-
----
-
-### 5. Health Check
-
-```
-GET /health
-```
-
-```json
-{
-  "status": "ok",
-  "uptime": 142.5,
-  "cache": {
-    "totalKeys": 3,
-    "activeKeys": 3
-  },
-  "timestamp": "2024-07-09T03:00:00.000Z"
-}
-```
-
----
-
-## ⚙️ Cấu hình
-
-| Biến       | Mặc định      | Mô tả          |
-| ---------- | ------------- | -------------- |
-| `PORT`     | `3000`        | Port lắng nghe |
-| `NODE_ENV` | `development` | Môi trường     |
-
-## 🛡️ Rate Limiting
-
-- **30 requests / phút / IP** để tránh bị block bởi TikTok
-- Dữ liệu được **cache 5 phút** — gọi lại cùng username sẽ không tốn request mới đến TikTok
-
-## ⚠️ Lưu ý
-
-- API scrape trực tiếp từ TikTok, **không cần API key**
-- TikTok có thể thay đổi cấu trúc trang → cần cập nhật parser
-- Nếu chạy nhiều request, nên dùng **proxy** để tránh bị block (thêm `PROXY_URL` vào `.env`)
-- Kết quả `fromCache: true` nghĩa là lấy từ cache, nhanh hơn và không tốn request
-
-## 📁 Cấu trúc
-
-```
-tiktok-user-api/
-├── src/
-│   ├── index.js                    # Entry point
-│   ├── app.js                      # Express setup
-│   ├── controllers/
-│   │   └── user.controller.js      # Business logic
-│   ├── routes/
-│   │   └── user.routes.js          # Route definitions
-│   └── services/
-│       ├── tiktok-scraper.js       # TikTok HTML scraper
-│       └── cache.js                # In-memory cache
-├── .env.example
-├── package.json
-└── README.md
-```
+Test dùng HTTP provider giả lập cục bộ nên không phụ thuộc TikTok hay mạng ngoài.

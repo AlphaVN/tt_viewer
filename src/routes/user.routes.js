@@ -10,6 +10,7 @@ import {
   getVideoCount,
   getFullProfile,
   getViews,
+  getAccountHealth,
 } from '../controllers/user.controller.js';
 
 const router = Router();
@@ -68,5 +69,12 @@ router.get('/:username/profile', getFullProfile);
  * @example GET /api/user/cristiano/views
  */
 router.get('/:username/views', getViews);
+
+/**
+ * @route   GET /api/user/:username/health
+ * @desc    Kiểm tra tài khoản còn truy cập được, public/private và khả năng lấy views
+ * @example GET /api/user/tiktok/health
+ */
+router.get('/:username/health', getAccountHealth);
 
 export default router;

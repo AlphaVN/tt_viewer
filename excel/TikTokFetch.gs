@@ -21,7 +21,7 @@ var DATA_START_ROW = 2;
 
 var COL = {
   USERNAME: 11, // K
-  STATUS: 9,   // I — Tình trạng
+  STATUS: 18,   // I — Tình trạng
   FOLLOWERS: 3, // C
   LIKES: 4,    // D
   VIDEOS: 5,   // E
@@ -130,7 +130,7 @@ function fetchAllRows(sheet, showAlert) {
           success +
           " thành công\n❌ " +
           failed +
-          " lỗi (= 0)\n⏩ " +
+          " lỗi\n⏩ " +
           skipped +
           " bỏ qua",
       );
@@ -164,6 +164,17 @@ function fetchSingleRow(sheet, row) {
   var username = rawUsername.replace(/^@/, "");
   Logger.log("▶ Hàng " + row + ": @" + username);
 
+  // Giữ dữ liệu cũ để không làm mất số liệu khi API tạm thời lỗi.
+  var previous = {
+    followers: sheet.getRange(row, COL.FOLLOWERS).getValue(),
+    likes: sheet.getRange(row, COL.LIKES).getValue(),
+    videos: sheet.getRange(row, COL.VIDEOS).getValue(),
+    views: sheet.getRange(row, COL.VIEWS).getValue(),
+    avatarValue: sheet.getRange(row, COL.AVATAR).getValue(),
+    avatarFormula: sheet.getRange(row, COL.AVATAR).getFormula(),
+    status: status,
+  };
+
   // Loading
   sheet.getRange(row, COL.FOLLOWERS).setValue("⏳");
   sheet.getRange(row, COL.LIKES).setValue("⏳");
@@ -177,12 +188,30 @@ function fetchSingleRow(sheet, row) {
   var result = callApi(username);
 
   if (result.error) {
-    sheet.getRange(row, COL.FOLLOWERS).setValue(0);
-    sheet.getRange(row, COL.LIKES).setValue(0);
-    sheet.getRange(row, COL.VIDEOS).setValue(0);
-    sheet.getRange(row, COL.VIEWS).setValue(0);
-    sheet.getRange(row, COL.AVATAR).setValue(0);
-    sheet.getRange(row, COL.VIEWS).setValue("❌ " + result.error);
+    if (result.code === "USER_NOT_FOUND") {
+      // Chỉ ghi 0 khi đã xác nhận tài khoản không tồn tại/không truy cập được.
+      sheet.getRange(row, COL.FOLLOWERS).setValue(0);
+      sheet.getRange(row, COL.LIKES).setValue(0);
+      sheet.getRange(row, COL.VIDEOS).setValue(0);
+      sheet.getRange(row, COL.VIEWS).setValue(0);
+      sheet.getRange(row, COL.AVATAR).setValue("—");
+      sheet
+        .getRange(row, COL.STATUS)
+        .setValue(result.accountHealthLabel || "KHÔNG TÌM THẤY");
+    } else {
+      // Lỗi mạng/provider: khôi phục dữ liệu gần nhất thay vì biến thành 0 giả.
+      sheet.getRange(row, COL.FOLLOWERS).setValue(previous.followers);
+      sheet.getRange(row, COL.LIKES).setValue(previous.likes);
+      sheet.getRange(row, COL.VIDEOS).setValue(previous.videos);
+      sheet.getRange(row, COL.VIEWS).setValue(previous.views);
+      if (previous.avatarFormula) {
+        sheet.getRange(row, COL.AVATAR).setFormula(previous.avatarFormula);
+      } else {
+        sheet.getRange(row, COL.AVATAR).setValue(previous.avatarValue);
+      }
+      sheet.getRange(row, COL.STATUS).setValue(previous.status);
+    }
+    sheet.getRange(row, COL.STATUS).setNote("Lần kiểm tra gần nhất lỗi: " + result.error);
     Logger.log("  ❌ " + result.error);
     SpreadsheetApp.flush();
     return "error";
@@ -191,8 +220,13 @@ function fetchSingleRow(sheet, row) {
   sheet.getRange(row, COL.FOLLOWERS).setValue(result.followers);
   sheet.getRange(row, COL.LIKES).setValue(result.likes);
   sheet.getRange(row, COL.VIDEOS).setValue(result.videoCount);
-  sheet.getRange(row, COL.VIEWS).setValue(result.totalViews !== null ? result.totalViews : "N/A");
-
+  sheet
+    .getRange(row, COL.VIEWS)
+    .setValue(result.totalViews !== null ? result.totalViews : "RIÊNG TƯ");
+  sheet
+    .getRange(row, COL.STATUS)
+    .setValue(result.accountHealthLabel || "KHÔNG XÁC ĐỊNH")
+    .clearNote();
 
   if (result.avatarUrl) {
     var safeUrl = result.avatarUrl.replace(/"/g, "'");
@@ -213,7 +247,8 @@ function fetchSingleRow(sheet, row) {
       result.videoCount +
       " videos | " +
       result.totalViews +
-      " views",
+      " views | " +
+      result.accountHealthLabel,
   );
   SpreadsheetApp.flush();
   return "success";
@@ -234,13 +269,28 @@ function callApi(username) {
     });
 
     var code = response.getResponseCode();
-    if (code !== 200) return { error: "HTTP " + code };
-
     var json = JSON.parse(response.getContentText());
+    if (code !== 200) {
+      return {
+        error:
+          json.error && json.error.message
+            ? json.error.message
+            : "HTTP " + code,
+        code: json.error && json.error.code ? json.error.code : "HTTP_" + code,
+        accountHealthLabel:
+          json.error &&
+          json.error.details &&
+          json.error.details.accountHealth &&
+          json.error.details.accountHealth.label
+            ? json.error.details.accountHealth.label
+            : "",
+      };
+    }
     if (!json.success || !json.data) {
       return {
         error:
           json.error && json.error.message ? json.error.message : "API error",
+        code: json.error && json.error.code ? json.error.code : "API_ERROR",
       };
     }
 
@@ -252,6 +302,10 @@ function callApi(username) {
         ? Number(json.data.totalViews)
         : null,
       avatarUrl: json.data.avatarUrl || "",
+      accountHealthLabel:
+        json.data.accountHealth && json.data.accountHealth.label
+          ? json.data.accountHealth.label
+          : "KHÔNG XÁC ĐỊNH",
     };
   } catch (err) {
     return { error: err.message || "Network error" };
