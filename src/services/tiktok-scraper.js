@@ -110,92 +110,6 @@ function buildProfile(user, stats) {
   };
 }
 
-// ── Lấy tổng view qua browser (dùng cookies có sẵn) ─────────────────────────────────
-/**
- * Dùng page.evaluate để gọi fetch() bên trong browser context.
- * Browser đã có cookies + headers hợp lệ sau khi visit profile → không bị block.
- * @param {import('playwright').Page} page
- * @param {string} secUid
- * @param {number} maxVideos
- */
-async function fetchVideoViewsInBrowser(page, secUid, maxVideos = 30) {
-  // Lấy URL hiện tại và cookies (có ms_token) từ browser context
-  const currentUrl = page.url();
-  const cookies = await page.context().cookies('https://www.tiktok.com');
-  const msToken = cookies.find(c => c.name === 'msToken')?.value
-    || cookies.find(c => c.name === 'ms_token')?.value
-    || '';
-
-  console.log(`[fetchVideoViewsInBrowser] cookies count=${cookies.length} | msToken=${msToken ? msToken.slice(0, 20) + '...' : 'MISSING'}`);
-
-  const result = await page.evaluate(async ({ secUid, maxVideos, referer, msToken }) => {
-    // Build base params
-    const baseParams = `secUid=${encodeURIComponent(secUid)}&count=${maxVideos}&cursor=0&sourceType=8&appId=1233&region=US&priority_region=US&language=en`;
-    const msTokenParam = msToken ? `&msToken=${encodeURIComponent(msToken)}` : '';
-
-    // Thử nhiều endpoint — TikTok thay đổi API thường xuyên
-    const endpoints = [
-      `https://www.tiktok.com/api/post/item_list/?aid=1988&${baseParams}${msTokenParam}`,
-      `https://www.tiktok.com/api/post/item_list/?${baseParams}${msTokenParam}`,
-    ];
-
-    const headers = {
-      'Accept': 'application/json, text/plain, */*',
-      'Referer': referer,
-      'Origin': 'https://www.tiktok.com',
-    };
-
-    const errors = [];
-    for (const url of endpoints) {
-      try {
-        const resp = await fetch(url, { headers, credentials: 'include' });
-        const rawText = await resp.text();
-
-        if (!resp.ok) {
-          errors.push(`HTTP ${resp.status}: ${rawText.slice(0, 200)}`);
-          continue;
-        }
-
-        let json;
-        try { json = JSON.parse(rawText); } catch (e) {
-          errors.push(`JSON parse error: ${rawText.slice(0, 200)}`);
-          continue;
-        }
-
-        // TikTok trả về statusCode != 0 khi bị block / thiếu token
-        if (json.statusCode !== 0 && json.statusCode !== undefined) {
-          return { error: `TikTok statusCode=${json.statusCode}`, raw: JSON.stringify(json).slice(0, 400), total: null };
-        }
-
-        if (!json?.itemList || !Array.isArray(json.itemList)) {
-          return { error: 'no_itemList', raw: JSON.stringify(json).slice(0, 400), total: null };
-        }
-
-        const total = json.itemList.reduce((sum, item) => {
-          const plays = parseInt(
-            item?.stats?.playCount ?? item?.stats?.viewCount ?? item?.statsV2?.playCount ?? 0,
-            10
-          );
-          return sum + plays;
-        }, 0);
-
-        return { total, count: json.itemList.length };
-      } catch (err) {
-        errors.push(`Exception: ${err.message}`);
-      }
-    }
-
-    return { error: 'all_endpoints_failed', details: errors.join(' | '), total: null };
-  }, { secUid, maxVideos, referer: currentUrl, msToken });
-
-  if (result.error) {
-    console.warn('[fetchVideoViewsInBrowser] Lỗi:', result.error, result.details ?? result.raw ?? '');
-    return null;
-  }
-
-  console.log(`[fetchVideoViewsInBrowser] ${result.count} videos → tổng ${result.total.toLocaleString()} views`);
-  return result.total;
-}
 
 // ── Scrape bằng Playwright (primary) ──────────────────────────────────────
 async function scrapeWithBrowser(username, includeViews = false) {
@@ -214,7 +128,7 @@ async function scrapeWithBrowser(username, includeViews = false) {
 
   const page = await context.newPage();
 
-  // Thêm stealth script thủ công để chắc chắn
+  // Stealth script
   await page.addInitScript(() => {
     Object.defineProperty(navigator, 'webdriver', { get: () => false });
     window.chrome = { runtime: {} };
@@ -233,17 +147,16 @@ async function scrapeWithBrowser(username, includeViews = false) {
       throw e;
     }
 
-    // Chờ thêm để JS inject dữ liệu vào DOM và TikTok set cookies (ms_token cần ~3-4s)
-    await page.waitForTimeout(3500);
+    // Chờ JS render xong
+    await page.waitForTimeout(2500);
 
-    // Trích xuất JSON blob
+    // Trích xuất JSON blob profile
     const raw = await page.evaluate(() => {
       const el = document.getElementById('__UNIVERSAL_DATA_FOR_REHYDRATION__');
       return el ? el.textContent : null;
     });
 
     if (!raw) {
-      // Kiểm tra có phải CAPTCHA page không
       const bodyText = await page.evaluate(() => document.body?.innerText?.slice(0, 200));
       console.warn('[Browser] Page text:', bodyText);
       const e = new Error('Không trích xuất được dữ liệu. Có thể TikTok đang block IP.');
@@ -258,23 +171,61 @@ async function scrapeWithBrowser(username, includeViews = false) {
       throw e;
     }
 
-    // Lấy views trong cùng browser context (có cookies) nếu được yêu cầu
     console.log(`[scrapeWithBrowser] includeViews=${includeViews} | secUid=${profile.secUid} | privateAccount=${profile.privateAccount}`);
-    if (includeViews && profile.secUid && !profile.privateAccount) {
+
+    if (includeViews && !profile.privateAccount) {
       try {
-        profile.totalViews = await fetchVideoViewsInBrowser(page, profile.secUid);
+        profile.totalViews = await scrapeViewsFromDOM(page);
       } catch (viewErr) {
-        console.warn('[scrapeWithBrowser] Không lấy được views:', viewErr.message);
+        console.warn('[scrapeWithBrowser] Không scrape được views từ DOM:', viewErr.message);
       }
-    } else if (includeViews && !profile.secUid) {
-      console.warn('[scrapeWithBrowser] Bỏ qua views: secUid bị null/undefined');
-    } else if (includeViews && profile.privateAccount) {
-      console.warn('[scrapeWithBrowser] Bỏ qua views: tài khoản private');
     }
 
     return profile;
   } finally {
     await context.close();
+  }
+}
+
+/**
+ * Lấy tổng views từ itemList trong __UNIVERSAL_DATA_FOR_REHYDRATION__
+ * TikTok nhúng một số video đầu vào đây — thử đọc sau khi trang load xong.
+ */
+async function scrapeViewsFromDOM(page) {
+  // Chờ network idle để TikTok có thể đã fetch thêm dữ liệu
+  try {
+    await page.waitForLoadState('networkidle', { timeout: 8000 });
+  } catch { /* timeout OK */ }
+
+  // Re-read UNIVERSAL_DATA sau khi JS đã chạy thêm
+  const raw = await page.evaluate(() => {
+    const el = document.getElementById('__UNIVERSAL_DATA_FOR_REHYDRATION__');
+    return el ? el.textContent : null;
+  });
+  if (!raw) return null;
+
+  try {
+    const data = JSON.parse(raw);
+    const userDetail = data?.__DEFAULT_SCOPE__?.['webapp.user-detail'];
+    const itemList = userDetail?.userInfo?.itemList;
+
+    if (Array.isArray(itemList) && itemList.length > 0) {
+      const total = itemList.reduce((sum, item) => {
+        const plays = parseInt(
+          item?.stats?.playCount ?? item?.stats?.viewCount ?? item?.statsV2?.playCount ?? 0,
+          10
+        );
+        return sum + plays;
+      }, 0);
+      console.log(`[DOM scrape] itemList=${itemList.length} items → tổng ${total.toLocaleString()} views`);
+      return total;
+    }
+
+    console.warn(`[DOM scrape] itemList rỗng (length=${itemList?.length ?? 'N/A'}) — TikTok không trả data cho headless browser`);
+    return null;
+  } catch (e) {
+    console.warn('[DOM scrape] Parse lỗi:', e.message);
+    return null;
   }
 }
 

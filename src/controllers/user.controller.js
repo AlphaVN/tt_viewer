@@ -118,15 +118,19 @@ export async function getViews(req, res) {
   const { username } = req.params;
   try {
     const { profile } = await getProfile(username, true);
+    const note = profile.privateAccount
+      ? 'Tài khoản private, không lấy được views'
+      : profile.totalViews === null
+        ? 'TikTok chặn scraping video views (tt-ticket-guard anti-bot). Chỉ followers/likes/videoCount khả dụng.'
+        : `Tổng view từ ${Math.min(profile.videoCount, 30)} video gần nhất`;
     return successResponse(res, {
       username: profile.username,
       totalViews: profile.totalViews,
       videoCount: profile.videoCount,
-      note: profile.privateAccount
-        ? 'Tài khoản private, không lấy được views'
-        : 'Tổng view từ ' + Math.min(profile.videoCount, 30) + ' video gần nhất',
+      note,
     });
   } catch (err) {
     return errorResponse(res, err.message, err.status || 500, err.code || 'INTERNAL_ERROR');
   }
 }
+
