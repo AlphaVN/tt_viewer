@@ -119,53 +119,64 @@ function buildProfile(user, stats) {
  * @param {number} maxVideos
  */
 async function fetchVideoViewsInBrowser(page, secUid, maxVideos = 30) {
-  const result = await page.evaluate(async ({ secUid, maxVideos }) => {
-    const params = new URLSearchParams({
-      secUid,
-      count: String(maxVideos),
-      cursor: '0',
-      sourceType: '8',
-      appId: '1233',
-      region: 'US',
-      priority_region: 'US',
-      language: 'en',
-    });
+  // Lấy URL hiện tại của page (đang ở trang profile) để dùng làm Referer
+  const currentUrl = page.url();
 
-    const url = `https://www.tiktok.com/api/post/item_list/?${params}`;
-    try {
-      const resp = await fetch(url, {
-        headers: {
-          'Accept': 'application/json, text/plain, */*',
-          'Referer': `https://www.tiktok.com/`,
-        },
-        credentials: 'include',  // gửi kèm cookies có sẵn
-      });
+  const result = await page.evaluate(async ({ secUid, maxVideos, referer }) => {
+    // Thử nhiều endpoint — TikTok thay đổi API thường xuyên
+    const endpoints = [
+      // Endpoint mới hơn (2024+)
+      `https://www.tiktok.com/api/post/item_list/?aid=1988&secUid=${encodeURIComponent(secUid)}&count=${maxVideos}&cursor=0&sourceType=8&appId=1233&region=US&priority_region=US&language=en`,
+      // Endpoint cũ
+      `https://www.tiktok.com/api/post/item_list/?secUid=${encodeURIComponent(secUid)}&count=${maxVideos}&cursor=0&sourceType=8&appId=1233&region=US&priority_region=US&language=en`,
+    ];
 
-      if (!resp.ok) return { error: `HTTP ${resp.status}`, total: 0 };
-      const json = await resp.json();
+    const headers = {
+      'Accept': 'application/json, text/plain, */*',
+      'Referer': referer,  // Dùng URL trang profile thật để TikTok tin tưởng hơn
+      'Origin': 'https://www.tiktok.com',
+    };
 
-      if (!json?.itemList || !Array.isArray(json.itemList)) {
-        return { error: 'no_itemList', raw: JSON.stringify(json).slice(0, 300), total: 0 };
+    for (const url of endpoints) {
+      try {
+        const resp = await fetch(url, { headers, credentials: 'include' });
+        if (!resp.ok) continue;
+
+        const json = await resp.json();
+
+        // TikTok trả về statusCode != 0 khi bị block / thiếu token
+        if (json.statusCode !== 0 && json.statusCode !== undefined) {
+          return { error: `TikTok statusCode=${json.statusCode}`, raw: JSON.stringify(json).slice(0, 400), total: null };
+        }
+
+        if (!json?.itemList || !Array.isArray(json.itemList)) {
+          return { error: 'no_itemList', raw: JSON.stringify(json).slice(0, 400), total: null };
+        }
+
+        const total = json.itemList.reduce((sum, item) => {
+          const plays = parseInt(
+            item?.stats?.playCount ?? item?.stats?.viewCount ?? item?.statsV2?.playCount ?? 0,
+            10
+          );
+          return sum + plays;
+        }, 0);
+
+        return { total, count: json.itemList.length };
+      } catch (err) {
+        // Thử endpoint tiếp theo
       }
-
-      const total = json.itemList.reduce((sum, item) => {
-        const plays = parseInt(item?.stats?.playCount ?? item?.stats?.viewCount ?? 0, 10);
-        return sum + plays;
-      }, 0);
-
-      return { total, count: json.itemList.length };
-    } catch (err) {
-      return { error: err.message, total: 0 };
     }
-  }, { secUid, maxVideos });
+
+    return { error: 'all_endpoints_failed', total: null };
+  }, { secUid, maxVideos, referer: currentUrl });
 
   if (result.error) {
     console.warn('[fetchVideoViewsInBrowser] Lỗi:', result.error, result.raw ?? '');
-  } else {
-    console.log(`[fetchVideoViewsInBrowser] ${result.count} videos → tổng ${result.total.toLocaleString()} views`);
+    return null;  // null = không lấy được, khác với 0 view thật
   }
 
-  return result.total ?? 0;
+  console.log(`[fetchVideoViewsInBrowser] ${result.count} videos → tổng ${result.total.toLocaleString()} views`);
+  return result.total;  // có thể là 0 nếu tất cả video đều 0 view
 }
 
 // ── Scrape bằng Playwright (primary) ──────────────────────────────────────
@@ -306,6 +317,8 @@ export async function fetchUserProfile(username, { includeViews = false } = {}) 
     console.warn(`[Browser] Thất bại (${browserErr.message}), thử axios fallback...`);
     // axios fallback không hỗ trợ views (không có cookies)
     profile = await scrapeWithAxios(clean);
+    // Axios fallback không có cookies → không lấy được views
+    // Giữ totalViews = null để client biết là chưa fetch được (khác với 0 view thật)
   }
 
   return profile;
