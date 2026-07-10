@@ -119,30 +119,48 @@ function buildProfile(user, stats) {
  * @param {number} maxVideos
  */
 async function fetchVideoViewsInBrowser(page, secUid, maxVideos = 30) {
-  // Lấy URL hiện tại của page (đang ở trang profile) để dùng làm Referer
+  // Lấy URL hiện tại và cookies (có ms_token) từ browser context
   const currentUrl = page.url();
+  const cookies = await page.context().cookies('https://www.tiktok.com');
+  const msToken = cookies.find(c => c.name === 'msToken')?.value
+    || cookies.find(c => c.name === 'ms_token')?.value
+    || '';
 
-  const result = await page.evaluate(async ({ secUid, maxVideos, referer }) => {
+  console.log(`[fetchVideoViewsInBrowser] cookies count=${cookies.length} | msToken=${msToken ? msToken.slice(0, 20) + '...' : 'MISSING'}`);
+
+  const result = await page.evaluate(async ({ secUid, maxVideos, referer, msToken }) => {
+    // Build base params
+    const baseParams = `secUid=${encodeURIComponent(secUid)}&count=${maxVideos}&cursor=0&sourceType=8&appId=1233&region=US&priority_region=US&language=en`;
+    const msTokenParam = msToken ? `&msToken=${encodeURIComponent(msToken)}` : '';
+
     // Thử nhiều endpoint — TikTok thay đổi API thường xuyên
     const endpoints = [
-      // Endpoint mới hơn (2024+)
-      `https://www.tiktok.com/api/post/item_list/?aid=1988&secUid=${encodeURIComponent(secUid)}&count=${maxVideos}&cursor=0&sourceType=8&appId=1233&region=US&priority_region=US&language=en`,
-      // Endpoint cũ
-      `https://www.tiktok.com/api/post/item_list/?secUid=${encodeURIComponent(secUid)}&count=${maxVideos}&cursor=0&sourceType=8&appId=1233&region=US&priority_region=US&language=en`,
+      `https://www.tiktok.com/api/post/item_list/?aid=1988&${baseParams}${msTokenParam}`,
+      `https://www.tiktok.com/api/post/item_list/?${baseParams}${msTokenParam}`,
     ];
 
     const headers = {
       'Accept': 'application/json, text/plain, */*',
-      'Referer': referer,  // Dùng URL trang profile thật để TikTok tin tưởng hơn
+      'Referer': referer,
       'Origin': 'https://www.tiktok.com',
     };
 
+    const errors = [];
     for (const url of endpoints) {
       try {
         const resp = await fetch(url, { headers, credentials: 'include' });
-        if (!resp.ok) continue;
+        const rawText = await resp.text();
 
-        const json = await resp.json();
+        if (!resp.ok) {
+          errors.push(`HTTP ${resp.status}: ${rawText.slice(0, 200)}`);
+          continue;
+        }
+
+        let json;
+        try { json = JSON.parse(rawText); } catch (e) {
+          errors.push(`JSON parse error: ${rawText.slice(0, 200)}`);
+          continue;
+        }
 
         // TikTok trả về statusCode != 0 khi bị block / thiếu token
         if (json.statusCode !== 0 && json.statusCode !== undefined) {
@@ -163,20 +181,20 @@ async function fetchVideoViewsInBrowser(page, secUid, maxVideos = 30) {
 
         return { total, count: json.itemList.length };
       } catch (err) {
-        // Thử endpoint tiếp theo
+        errors.push(`Exception: ${err.message}`);
       }
     }
 
-    return { error: 'all_endpoints_failed', total: null };
-  }, { secUid, maxVideos, referer: currentUrl });
+    return { error: 'all_endpoints_failed', details: errors.join(' | '), total: null };
+  }, { secUid, maxVideos, referer: currentUrl, msToken });
 
   if (result.error) {
-    console.warn('[fetchVideoViewsInBrowser] Lỗi:', result.error, result.raw ?? '');
-    return null;  // null = không lấy được, khác với 0 view thật
+    console.warn('[fetchVideoViewsInBrowser] Lỗi:', result.error, result.details ?? result.raw ?? '');
+    return null;
   }
 
   console.log(`[fetchVideoViewsInBrowser] ${result.count} videos → tổng ${result.total.toLocaleString()} views`);
-  return result.total;  // có thể là 0 nếu tất cả video đều 0 view
+  return result.total;
 }
 
 // ── Scrape bằng Playwright (primary) ──────────────────────────────────────
@@ -215,8 +233,8 @@ async function scrapeWithBrowser(username, includeViews = false) {
       throw e;
     }
 
-    // Chờ thêm để JS inject dữ liệu vào DOM và TikTok set cookies
-    await page.waitForTimeout(2000);
+    // Chờ thêm để JS inject dữ liệu vào DOM và TikTok set cookies (ms_token cần ~3-4s)
+    await page.waitForTimeout(3500);
 
     // Trích xuất JSON blob
     const raw = await page.evaluate(() => {
