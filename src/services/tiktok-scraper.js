@@ -241,12 +241,17 @@ async function scrapeWithBrowser(username, includeViews = false) {
     }
 
     // Lấy views trong cùng browser context (có cookies) nếu được yêu cầu
+    console.log(`[scrapeWithBrowser] includeViews=${includeViews} | secUid=${profile.secUid} | privateAccount=${profile.privateAccount}`);
     if (includeViews && profile.secUid && !profile.privateAccount) {
       try {
         profile.totalViews = await fetchVideoViewsInBrowser(page, profile.secUid);
       } catch (viewErr) {
         console.warn('[scrapeWithBrowser] Không lấy được views:', viewErr.message);
       }
+    } else if (includeViews && !profile.secUid) {
+      console.warn('[scrapeWithBrowser] Bỏ qua views: secUid bị null/undefined');
+    } else if (includeViews && profile.privateAccount) {
+      console.warn('[scrapeWithBrowser] Bỏ qua views: tài khoản private');
     }
 
     return profile;
