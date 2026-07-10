@@ -52,6 +52,18 @@ async function getBrowser() {
       _browser = null;
     });
     console.log('[Browser] Chromium sẵn sàng ✓');
+  } catch (err) {
+    _browserStarting = false;
+    if (err.message?.includes("Executable doesn't exist")) {
+      console.error('[Browser] Thất bại: Chromium binary chưa được cài.');
+      console.error('[Browser] Chạy lệnh sau để cài: npx playwright install chromium --with-deps');
+      const e = new Error('Chromium chưa cài. Chạy: npx playwright install chromium --with-deps');
+      e.code = 'BROWSER_NOT_INSTALLED';
+      e.status = 503;
+      throw e;
+    }
+    console.error('[Browser] Thất bại:', err.message);
+    throw err;
   } finally {
     _browserStarting = false;
   }

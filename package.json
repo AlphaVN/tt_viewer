@@ -8,7 +8,7 @@
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
     "tunnel": "node start-with-tunnel.js",
-    "postinstall": "npx playwright install chromium"
+    "postinstall": "npx playwright install chromium --with-deps"
   },
   "keywords": ["tiktok", "api", "scraper", "express"],
   "author": "",

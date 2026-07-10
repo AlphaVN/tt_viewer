@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: tiktok-user-api
+    runtime: node
+    plan: starter
+    buildCommand: npm install && npx playwright install-deps chromium && npx playwright install chromium
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
+    healthCheckPath: /health
