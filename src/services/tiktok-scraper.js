@@ -10,51 +10,97 @@
 
 import axios from 'axios';
 
-const DEFAULT_PROVIDER_URL = 'https://www.tikwm.com';
-const DEFAULT_TIKTOK_WEB_URL = 'https://www.tiktok.com';
-const DEFAULT_REQUEST_INTERVAL_MS = 1_100;
-const DEFAULT_VIEWS_LIMIT = 30;
 const MAX_VIEWS_LIMIT = 35;
 const MISSING_USER_STATUS_CODES = new Set([10202, 10221, 10223]);
 const MISSING_USER_MESSAGE_RE = /user.*(?:not found|does not exist|doesn['’]t exist|banned)|account.*(?:not found|couldn['’]t be found)|couldn['’]t find (?:this |the )?account/i;
 
-function intFromEnv(name, fallback, min, max) {
-  const value = Number.parseInt(process.env[name] ?? '', 10);
-  if (!Number.isFinite(value)) return fallback;
-  return Math.min(Math.max(value, min), max);
-}
+// Cấu hình chạy production được cố định trong mã nguồn, không đọc từ .env.
+const PRODUCTION_SCRAPER_CONFIG = Object.freeze({
+  providerUrl: 'https://www.tikwm.com',
+  tiktokWebUrl: 'https://www.tiktok.com',
+  requestIntervalMs: 1_100,
+  requestTimeoutMs: 5_000,
+  retries: 3,
+  viewsLimit: 30,
+});
 
-const PROVIDER_URL = (process.env.TIKTOK_HTTP_API_URL || DEFAULT_PROVIDER_URL).replace(/\/$/, '');
-const TIKTOK_WEB_URL = (process.env.TIKTOK_WEB_URL || DEFAULT_TIKTOK_WEB_URL).replace(/\/$/, '');
-const REQUEST_INTERVAL_MS = intFromEnv(
-  'TIKTOK_REQUEST_INTERVAL_MS',
-  DEFAULT_REQUEST_INTERVAL_MS,
-  250,
-  10_000,
-);
-const PROVIDER_RETRIES = intFromEnv('TIKTOK_HTTP_RETRIES', 3, 1, 5);
-const VIEWS_LIMIT = intFromEnv('TIKTOK_VIEWS_LIMIT', DEFAULT_VIEWS_LIMIT, 1, MAX_VIEWS_LIMIT);
+let {
+  providerUrl: PROVIDER_URL,
+  tiktokWebUrl: TIKTOK_WEB_URL,
+  requestIntervalMs: REQUEST_INTERVAL_MS,
+  requestTimeoutMs: REQUEST_TIMEOUT_MS,
+  retries: PROVIDER_RETRIES,
+  viewsLimit: VIEWS_LIMIT,
+} = PRODUCTION_SCRAPER_CONFIG;
 
 const USER_AGENTS = [
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
 ];
 
-const http = axios.create({
-  baseURL: PROVIDER_URL,
-  timeout: 20_000,
-  maxRedirects: 5,
-  maxContentLength: 5 * 1024 * 1024,
-  headers: {
-    Accept: 'application/json',
-    'Accept-Language': 'en-US,en;q=0.9',
-  },
-});
+function createProviderHttpClient() {
+  return axios.create({
+    baseURL: PROVIDER_URL,
+    timeout: REQUEST_TIMEOUT_MS,
+    proxy: false,
+    maxRedirects: 5,
+    maxContentLength: 5 * 1024 * 1024,
+    headers: {
+      Accept: 'application/json',
+      'Accept-Language': 'en-US,en;q=0.9',
+    },
+  });
+}
+
+let http = createProviderHttpClient();
 
 let providerQueue = Promise.resolve();
 let lastProviderRequestAt = 0;
 
+/** Chỉ dùng trong test cục bộ; production luôn dùng cấu hình cố định ở trên. */
+export function configureTikTokScraperForTest(overrides = {}) {
+  const config = { ...PRODUCTION_SCRAPER_CONFIG, ...overrides };
+  if (!Number.isInteger(config.viewsLimit) || config.viewsLimit < 1 || config.viewsLimit > MAX_VIEWS_LIMIT) {
+    throw new Error(`viewsLimit must be an integer from 1 to ${MAX_VIEWS_LIMIT}.`);
+  }
+
+  PROVIDER_URL = String(config.providerUrl).replace(/\/$/, '');
+  TIKTOK_WEB_URL = String(config.tiktokWebUrl).replace(/\/$/, '');
+  REQUEST_INTERVAL_MS = Number(config.requestIntervalMs);
+  REQUEST_TIMEOUT_MS = Number(config.requestTimeoutMs);
+  PROVIDER_RETRIES = Number(config.retries);
+  VIEWS_LIMIT = config.viewsLimit;
+  http = createProviderHttpClient();
+  providerQueue = Promise.resolve();
+  lastProviderRequestAt = 0;
+}
+
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+function throwIfAborted(signal) {
+  if (signal?.aborted) throw signal.reason || new Error('Request cancelled.');
+}
+
+function waitWithSignal(ms, signal) {
+  if (!signal) return wait(ms);
+  throwIfAborted(signal);
+
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(onComplete, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', onAbort);
+      reject(signal.reason || new Error('Request cancelled.'));
+    };
+    function onComplete() {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }
+    signal.addEventListener('abort', onAbort, { once: true });
+    if (signal.aborted) onAbort();
+  });
+}
 
 function serviceError(message, code, status, details) {
   const error = new Error(message);
@@ -102,12 +148,14 @@ function normalizeUsername(username) {
  * Serialize calls to the provider to avoid its one-request/second free limit.
  * A rejected task does not break the queue for later requests.
  */
-function scheduleProviderRequest(task) {
+function scheduleProviderRequest(task, signal) {
   const run = providerQueue.then(async () => {
+    throwIfAborted(signal);
     const elapsed = Date.now() - lastProviderRequestAt;
     if (elapsed < REQUEST_INTERVAL_MS) {
-      await wait(REQUEST_INTERVAL_MS - elapsed);
+      await waitWithSignal(REQUEST_INTERVAL_MS - elapsed, signal);
     }
+    throwIfAborted(signal);
     lastProviderRequestAt = Date.now();
     return task();
   });
@@ -124,13 +172,14 @@ function isRetryableProviderMessage(message) {
   return /limit|too many|busy|timeout|temporar|try again|system error|network/i.test(message);
 }
 
-async function providerGet(path, params, { username } = {}) {
+async function providerGet(path, params, { username, signal } = {}) {
   let lastError;
 
   for (let attempt = 1; attempt <= PROVIDER_RETRIES; attempt += 1) {
     try {
       const response = await scheduleProviderRequest(() => http.get(path, {
         params,
+        signal,
         headers: {
           'User-Agent': USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)],
         },
@@ -154,6 +203,7 @@ async function providerGet(path, params, { username } = {}) {
 
       if (!isRetryableProviderMessage(providerMessage)) break;
     } catch (error) {
+      if (signal?.aborted) throw signal.reason || error;
       if (error.code === 'USER_NOT_FOUND') throw error;
 
       const httpStatus = error.response?.status;
@@ -169,7 +219,7 @@ async function providerGet(path, params, { username } = {}) {
     }
 
     if (attempt < PROVIDER_RETRIES) {
-      await wait(Math.min(500 * (2 ** (attempt - 1)), 2_000));
+      await waitWithSignal(Math.min(500 * (2 ** (attempt - 1)), 2_000), signal);
     }
   }
 
@@ -415,8 +465,8 @@ function parseUserProfileHtml(html, username) {
   );
 }
 
-async function fetchProfileFromProvider(username) {
-  const data = await providerGet('/api/user/info', { unique_id: username }, { username });
+async function fetchProfileFromProvider(username, signal) {
+  const data = await providerGet('/api/user/info', { unique_id: username }, { username, signal });
   if (!data?.user || (!data.user.uniqueId && !data.user.id) || !isCompleteStats(data.stats)) {
     throw serviceError(
       'Nguồn dữ liệu trả về hồ sơ thiếu user hoặc các trường thống kê bắt buộc.',
@@ -439,11 +489,13 @@ async function fetchProfileFromProvider(username) {
  * Fetch profile fields directly from TikTok using plain HTTP. Recent views
  * continue to come from the JSON API.
  */
-async function requestUserProfileInfo(username) {
+async function requestUserProfileInfo(username, signal) {
   let response;
   try {
     response = await axios.get(`${TIKTOK_WEB_URL}/@${encodeURIComponent(username)}`, {
-      timeout: 15_000,
+      timeout: REQUEST_TIMEOUT_MS,
+      signal,
+      proxy: false,
       maxRedirects: 5,
       maxContentLength: 5 * 1024 * 1024,
       headers: {
@@ -454,6 +506,7 @@ async function requestUserProfileInfo(username) {
       },
     });
   } catch (error) {
+    if (signal?.aborted) throw signal.reason || error;
     if (error.response?.status === 404) throw accountNotFoundError(username);
     throw serviceError(
       `Không tải được hồ sơ TikTok: ${error.message}`,
@@ -472,14 +525,14 @@ async function requestUserProfileInfo(username) {
  * normalized into `stats` when available. Both TikTok's current universal-data
  * page format and the legacy __NEXT_DATA__ format are accepted.
  */
-export async function getUserProfileInfo(username) {
+export async function getUserProfileInfo(username, { signal } = {}) {
   const clean = normalizeUsername(username);
-  const { userInfo } = await requestUserProfileInfo(clean);
+  const { userInfo } = await requestUserProfileInfo(clean, signal);
   return normalizeUserInfoStats(userInfo);
 }
 
-async function fetchProfileFromTikTokHtml(username) {
-  const { userInfo, source } = await requestUserProfileInfo(username);
+async function fetchProfileFromTikTokHtml(username, signal) {
+  const { userInfo, source } = await requestUserProfileInfo(username, signal);
   const profile = buildProfile(userInfo.user, selectUserInfoStats(userInfo), source);
   if (!profile) {
     throw serviceError(
@@ -491,12 +544,12 @@ async function fetchProfileFromTikTokHtml(username) {
   return profile;
 }
 
-async function fetchRecentViews(username, limit = VIEWS_LIMIT) {
+async function fetchRecentViews(username, limit = VIEWS_LIMIT, signal) {
   const data = await providerGet('/api/user/posts', {
     unique_id: username,
     count: limit,
     cursor: 0,
-  }, { username });
+  }, { username, signal });
 
   const videos = Array.isArray(data.videos) ? data.videos.slice(0, limit) : [];
   if (videos.some(video => !Number.isFinite(Number(video?.play_count)))) {
@@ -526,17 +579,20 @@ async function fetchRecentViews(username, limit = VIEWS_LIMIT) {
 /**
  * Fetch a TikTok profile and optionally sum views from recent public videos.
  */
-export async function fetchUserProfile(username, { includeViews = false } = {}) {
+export async function fetchUserProfile(username, { includeViews = false, signal } = {}) {
   const clean = normalizeUsername(username);
+  throwIfAborted(signal);
 
   let profile;
   try {
-    profile = await fetchProfileFromTikTokHtml(clean);
+    profile = await fetchProfileFromTikTokHtml(clean, signal);
   } catch (tiktokError) {
+    if (signal?.aborted) throw tiktokError;
     console.warn(`[TikTok HTTP] TikTok profile lỗi (${tiktokError.message}); thử provider fallback.`);
     try {
-      profile = await fetchProfileFromProvider(clean);
+      profile = await fetchProfileFromProvider(clean, signal);
     } catch (providerError) {
+      if (signal?.aborted) throw signal.reason || providerError;
       if (tiktokError.code === 'USER_NOT_FOUND' && providerError.code === 'USER_NOT_FOUND') {
         throw tiktokError;
       }
@@ -559,7 +615,7 @@ export async function fetchUserProfile(username, { includeViews = false } = {}) 
     return profile;
   }
 
-  const views = await fetchRecentViews(clean);
+  const views = await fetchRecentViews(clean, VIEWS_LIMIT, signal);
   if (views.videoCount === 0) {
     throw serviceError(
       'Tài khoản có video nhưng nguồn dữ liệu không trả về danh sách video công khai.',
@@ -579,11 +635,12 @@ export async function fetchUserProfile(username, { includeViews = false } = {}) 
 }
 
 export const scraperConfig = Object.freeze({
-  providerUrl: PROVIDER_URL,
-  tiktokWebUrl: TIKTOK_WEB_URL,
+  get providerUrl() { return PROVIDER_URL; },
+  get tiktokWebUrl() { return TIKTOK_WEB_URL; },
   profileStrategy: 'tiktok-html-with-provider-fallback',
-  requestIntervalMs: REQUEST_INTERVAL_MS,
-  retries: PROVIDER_RETRIES,
-  viewsLimit: VIEWS_LIMIT,
+  get requestIntervalMs() { return REQUEST_INTERVAL_MS; },
+  get requestTimeoutMs() { return REQUEST_TIMEOUT_MS; },
+  get retries() { return PROVIDER_RETRIES; },
+  get viewsLimit() { return VIEWS_LIMIT; },
   browserEnabled: false,
 });

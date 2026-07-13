@@ -244,7 +244,8 @@ function fetchSingleRow(sheet, row) {
       result.totalViews +
       " views",
   );
-  SpreadsheetApp.flush();
+  // Không flush lần nữa ở đây: công thức IMAGE() tại G tải bất đồng bộ và
+  // không được phép giữ luồng cập nhật C:F chờ avatar.
   return "success";
 }
 

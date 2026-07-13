@@ -6,12 +6,26 @@
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
-import rateLimit from 'express-rate-limit';
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
+import { isIP } from 'node:net';
 import * as cache from './services/cache.js';
 import { scraperConfig } from './services/tiktok-scraper.js';
 import userRoutes from './routes/user.routes.js';
 
 const app = express();
+// Ứng dụng chỉ triển khai sau một Render proxy.
+const TRUST_PROXY_HOPS = 1;
+app.set('trust proxy', TRUST_PROXY_HOPS);
+
+function clientIpForRateLimit(req) {
+  if (TRUST_PROXY_HOPS > 0) {
+    const header = req.headers['x-forwarded-for'];
+    const forwardedFor = Array.isArray(header) ? header[0] : header;
+    const firstAddress = forwardedFor?.split(',')[0]?.trim();
+    if (firstAddress && isIP(firstAddress)) return firstAddress;
+  }
+  return req.ip || req.socket.remoteAddress;
+}
 
 // ─── Security Middleware ───────────────────────────────────────────────────
 app.use(helmet());
@@ -22,6 +36,7 @@ app.use(express.json());
 const limiter = rateLimit({
   windowMs: 60 * 1000,   // 1 minute window
   max: 30,               // 30 requests per minute per IP
+  keyGenerator: req => ipKeyGenerator(clientIpForRateLimit(req)),
   standardHeaders: true,
   legacyHeaders: false,
   message: {
@@ -87,6 +102,7 @@ app.get('/', (req, res) => {
     runtime: {
       browserEnabled: scraperConfig.browserEnabled,
       viewsLimit: scraperConfig.viewsLimit,
+      trustProxyHops: TRUST_PROXY_HOPS,
     },
   });
 });
@@ -105,6 +121,7 @@ app.get('/health', (req, res) => {
       mode: 'http',
       profileStrategy: scraperConfig.profileStrategy,
       viewsLimit: scraperConfig.viewsLimit,
+      trustProxyHops: TRUST_PROXY_HOPS,
     },
     timestamp: new Date().toISOString(),
   });

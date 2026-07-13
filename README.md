@@ -70,8 +70,8 @@ Response rút gọn:
 TikTok không hiển thị một chỉ số tổng view toàn tài khoản trên profile.
 `totalViews` của API này là tổng `play_count` của tối đa 30 video công khai gần
 nhất. Response luôn kèm `viewsVideoCount`, `viewsLimit` và `viewsScope` để không
-nhầm với số all-time. Có thể đổi giới hạn bằng `TIKTOK_VIEWS_LIMIT` (tối đa 35
-cho mỗi lần gọi nguồn dữ liệu hiện tại).
+nhầm với số all-time. Giới hạn hiện được cố định là 30 video gần nhất (tối đa
+35 cho mỗi lần gọi nguồn dữ liệu hiện tại).
 
 Nếu tài khoản private, `totalViews` là `null` và trạng thái là
 `ACTIVE_PRIVATE`; API không ghi số 0 giả. Nếu tài khoản công khai có video nhưng
@@ -113,20 +113,15 @@ File [excel/TikTokFetch.gs](excel/TikTokFetch.gs) ghi dữ liệu vào sheet
 - khôi phục nội dung C:G cũ khi gặp lỗi mạng/provider;
 - chỉ ghi `0` vào C:F và `—` vào G khi API xác nhận `USER_NOT_FOUND`.
 
-## Cấu hình
+## Cấu hình cố định trong mã nguồn
 
-| Biến | Mặc định | Mô tả |
+| Vị trí | Giá trị | Mô tả |
 | --- | --- | --- |
-| `PORT` | `3000` | Port lắng nghe |
-| `TIKTOK_WEB_URL` | `https://www.tiktok.com` | Web origin dùng để lấy profile trực tiếp |
-| `TIKTOK_HTTP_API_URL` | `https://www.tikwm.com` | HTTP JSON provider |
-| `TIKTOK_REQUEST_INTERVAL_MS` | `1100` | Khoảng cách tối thiểu giữa hai request provider |
-| `TIKTOK_HTTP_RETRIES` | `3` | Số lần thử lại, từ 1 đến 5 |
-| `TIKTOK_VIEWS_LIMIT` | `30` | Số video gần nhất dùng để cộng view, tối đa 35 |
-| `HTTPS_PROXY` | trống | Proxy HTTP(S) tùy chọn |
+| Runtime Render | `PORT` | Port do nền tảng cấp khi chạy |
+| [src/app.js](src/app.js) | `TRUST_PROXY_HOPS = 1` | Một Render reverse proxy |
+| [src/services/tiktok-scraper.js](src/services/tiktok-scraper.js) | TikTok, TikWM, 1.100 ms, 5.000 ms, 3 lần thử, 30 video | Cấu hình scraper production |
 
-Không giảm `TIKTOK_REQUEST_INTERVAL_MS` nếu dùng endpoint miễn phí; provider có
-thể trả lỗi giới hạn tần suất.
+`axios` được đặt `proxy: false`; biến proxy từ môi trường không được dùng.
 
 ## Deploy Render
 

@@ -9,14 +9,37 @@
 
 import { fetchUserProfile } from '../services/tiktok-scraper.js';
 
+const PROFILE_RESPONSE_TIMEOUT_MS = 5_000;
+
+function profileTimeoutError() {
+  const error = new Error(
+    'Nguồn TikTok không phản hồi trong 5 giây. Dữ liệu hiện có trên Excel được giữ nguyên.',
+  );
+  error.code = 'REQUEST_TIMEOUT';
+  error.status = 504;
+  return error;
+}
+
 /**
  * Fetch fresh user profile directly from TikTok (no cache)
  * @param {string} username
  * @returns {Promise<Object>}
  */
 async function getProfile(username, includeViews = false) {
-  const profile = await fetchUserProfile(username, { includeViews });
-  return { profile };
+  const abortController = new AbortController();
+  const timeoutId = setTimeout(() => {
+    abortController.abort(profileTimeoutError());
+  }, PROFILE_RESPONSE_TIMEOUT_MS);
+
+  try {
+    const profile = await fetchUserProfile(username, {
+      includeViews,
+      signal: abortController.signal,
+    });
+    return { profile };
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 /**

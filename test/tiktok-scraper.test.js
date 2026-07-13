@@ -7,6 +7,7 @@ let baseUrl;
 let fetchUserProfile;
 let getUserProfileInfo;
 let scraperConfig;
+let configureTikTokScraperForTest;
 
 const profiles = {
   demo: {
@@ -188,21 +189,24 @@ before(async () => {
 
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   baseUrl = `http://127.0.0.1:${server.address().port}`;
-  process.env.TIKTOK_HTTP_API_URL = baseUrl;
-  process.env.TIKTOK_WEB_URL = baseUrl;
-  process.env.TIKTOK_REQUEST_INTERVAL_MS = '250';
-  process.env.TIKTOK_HTTP_RETRIES = '1';
-  process.env.TIKTOK_VIEWS_LIMIT = '30';
 
-  ({ fetchUserProfile, getUserProfileInfo, scraperConfig } = await import('../src/services/tiktok-scraper.js'));
+  ({
+    fetchUserProfile,
+    getUserProfileInfo,
+    scraperConfig,
+    configureTikTokScraperForTest,
+  } = await import('../src/services/tiktok-scraper.js'));
+  configureTikTokScraperForTest({
+    providerUrl: baseUrl,
+    tiktokWebUrl: baseUrl,
+    requestIntervalMs: 250,
+    retries: 1,
+    viewsLimit: 30,
+  });
 });
 
 after(async () => {
-  delete process.env.TIKTOK_HTTP_API_URL;
-  delete process.env.TIKTOK_WEB_URL;
-  delete process.env.TIKTOK_REQUEST_INTERVAL_MS;
-  delete process.env.TIKTOK_HTTP_RETRIES;
-  delete process.env.TIKTOK_VIEWS_LIMIT;
+  configureTikTokScraperForTest();
   await new Promise(resolve => server.close(resolve));
 });
 
