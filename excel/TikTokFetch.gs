@@ -10,20 +10,25 @@
  *
  * Layout (1-indexed):
  *   C(3)=Followers  D(4)=Likes  E(5)=Videos  F(6)=Views  G(7)=Avatar
- *   I(9)=Tình trạng  K(11)=Username
+ *   K(11)=Username (chỉ đọc)
+ *
+ * Script chỉ ghi vào C:G của sheet "Account". Không ghi note, định dạng,
+ * kích thước hàng hoặc bất kỳ ô nào ngoài phạm vi này.
  */
 
 // ─── CONFIG ────────────────────────────────────────────────────────────────
 
 var API_BASE_URL = "API CUA BAN";
-var SHEET_NAME = "Accounts";
+var SHEET_NAME = "Account";
 var DATA_START_ROW = 2;
+var OUTPUT_START_COLUMN = 3; // C
+var OUTPUT_COLUMN_COUNT = 5; // C:G
 
 var COL = {
   USERNAME: 11, // K
-  STATUS: 18,   // I — Tình trạng
+  STATUS: 18,   // R (chỉ đọc để quyết định bỏ qua hàng)
   FOLLOWERS: 3, // C
-  LIKES: 4,    // D
+  LIKES: 4,     // D
   VIDEOS: 5,   // E
   VIEWS: 6,    // F — Tổng view (30 video gần nhất)
   AVATAR: 7,   // G
@@ -107,6 +112,8 @@ function fetchTikTokStats() {
 
 /** Fetch toàn bộ các hàng có username */
 function fetchAllRows(sheet, showAlert) {
+  if (!isTargetSheet(sheet)) return;
+
   var lastRow = sheet.getLastRow();
   var success = 0,
     skipped = 0,
@@ -145,6 +152,8 @@ function fetchAllRows(sheet, showAlert) {
  * @returns "success" | "error" | "skipped"
  */
 function fetchSingleRow(sheet, row) {
+  if (!isTargetSheet(sheet)) return "skipped";
+
   var rawUsername = sheet
     .getRange(row, COL.USERNAME)
     .getValue()
@@ -154,7 +163,7 @@ function fetchSingleRow(sheet, row) {
   // Bỏ qua nếu không có username
   if (!rawUsername) return "skipped";
 
-  // Bỏ qua nếu tình trạng thuộc danh sách cấm
+  // Chỉ đọc trạng thái hiện tại; script không ghi vào cột này.
   var status = sheet.getRange(row, COL.STATUS).getValue().toString().trim();
   if (SKIP_STATUSES.indexOf(status) !== -1) {
     Logger.log("⏭ Hàng " + row + ': bỏ qua vì trạng thái = "' + status + '"');
@@ -165,23 +174,14 @@ function fetchSingleRow(sheet, row) {
   Logger.log("▶ Hàng " + row + ": @" + username);
 
   // Giữ dữ liệu cũ để không làm mất số liệu khi API tạm thời lỗi.
+  var outputRange = getOutputRange(sheet, row);
   var previous = {
-    followers: sheet.getRange(row, COL.FOLLOWERS).getValue(),
-    likes: sheet.getRange(row, COL.LIKES).getValue(),
-    videos: sheet.getRange(row, COL.VIDEOS).getValue(),
-    views: sheet.getRange(row, COL.VIEWS).getValue(),
-    avatarValue: sheet.getRange(row, COL.AVATAR).getValue(),
-    avatarFormula: sheet.getRange(row, COL.AVATAR).getFormula(),
-    status: status,
+    values: outputRange.getValues()[0],
+    formulas: outputRange.getFormulas()[0],
   };
 
-  // Loading
-  sheet.getRange(row, COL.FOLLOWERS).setValue("⏳");
-  sheet.getRange(row, COL.LIKES).setValue("⏳");
-  sheet.getRange(row, COL.VIDEOS).setValue("⏳");
-  sheet.getRange(row, COL.VIEWS).setValue("⏳");
-
-  sheet.getRange(row, COL.AVATAR).setValue("⏳");
+  // Loading — chỉ ghi C:G.
+  writeOutputRow(sheet, row, ["⏳", "⏳", "⏳", "⏳", "⏳"]);
   SpreadsheetApp.flush();
 
   // Gọi API
@@ -190,53 +190,35 @@ function fetchSingleRow(sheet, row) {
   if (result.error) {
     if (result.code === "USER_NOT_FOUND") {
       // Chỉ ghi 0 khi đã xác nhận tài khoản không tồn tại/không truy cập được.
-      sheet.getRange(row, COL.FOLLOWERS).setValue(0);
-      sheet.getRange(row, COL.LIKES).setValue(0);
-      sheet.getRange(row, COL.VIDEOS).setValue(0);
-      sheet.getRange(row, COL.VIEWS).setValue(0);
-      sheet.getRange(row, COL.AVATAR).setValue("—");
-      sheet
-        .getRange(row, COL.STATUS)
-        .setValue(result.accountHealthLabel || "KHÔNG TÌM THẤY");
+      writeOutputRow(sheet, row, [0, 0, 0, 0, "—"]);
     } else {
       // Lỗi mạng/provider: khôi phục dữ liệu gần nhất thay vì biến thành 0 giả.
-      sheet.getRange(row, COL.FOLLOWERS).setValue(previous.followers);
-      sheet.getRange(row, COL.LIKES).setValue(previous.likes);
-      sheet.getRange(row, COL.VIDEOS).setValue(previous.videos);
-      sheet.getRange(row, COL.VIEWS).setValue(previous.views);
-      if (previous.avatarFormula) {
-        sheet.getRange(row, COL.AVATAR).setFormula(previous.avatarFormula);
-      } else {
-        sheet.getRange(row, COL.AVATAR).setValue(previous.avatarValue);
-      }
-      sheet.getRange(row, COL.STATUS).setValue(previous.status);
+      writeOutputRow(sheet, row, previous.values, previous.formulas);
     }
-    sheet.getRange(row, COL.STATUS).setNote("Lần kiểm tra gần nhất lỗi: " + result.error);
     Logger.log("  ❌ " + result.error);
     SpreadsheetApp.flush();
     return "error";
   }
 
-  sheet.getRange(row, COL.FOLLOWERS).setValue(result.followers);
-  sheet.getRange(row, COL.LIKES).setValue(result.likes);
-  sheet.getRange(row, COL.VIDEOS).setValue(result.videoCount);
-  sheet
-    .getRange(row, COL.VIEWS)
-    .setValue(result.totalViews !== null ? result.totalViews : "RIÊNG TƯ");
-  sheet
-    .getRange(row, COL.STATUS)
-    .setValue(result.accountHealthLabel || "KHÔNG XÁC ĐỊNH")
-    .clearNote();
-
+  var avatarValue = "—";
+  var avatarFormula = "";
   if (result.avatarUrl) {
     var safeUrl = result.avatarUrl.replace(/"/g, "'");
-    sheet
-      .getRange(row, COL.AVATAR)
-      .setFormula('=IMAGE("' + safeUrl + '";4;48;48)');
-    sheet.setRowHeight(row, 50);
-  } else {
-    sheet.getRange(row, COL.AVATAR).setValue("—");
+    avatarFormula = '=IMAGE("' + safeUrl + '";4;48;48)';
   }
+
+  writeOutputRow(
+    sheet,
+    row,
+    [
+      result.followers,
+      result.likes,
+      result.videoCount,
+      result.totalViews !== null ? result.totalViews : "RIÊNG TƯ",
+      avatarValue,
+    ],
+    ["", "", "", "", avatarFormula],
+  );
 
   Logger.log(
     "  ✅ " +
@@ -247,8 +229,7 @@ function fetchSingleRow(sheet, row) {
       result.videoCount +
       " videos | " +
       result.totalViews +
-      " views | " +
-      result.accountHealthLabel,
+      " views",
   );
   SpreadsheetApp.flush();
   return "success";
@@ -277,13 +258,6 @@ function callApi(username) {
             ? json.error.message
             : "HTTP " + code,
         code: json.error && json.error.code ? json.error.code : "HTTP_" + code,
-        accountHealthLabel:
-          json.error &&
-          json.error.details &&
-          json.error.details.accountHealth &&
-          json.error.details.accountHealth.label
-            ? json.error.details.accountHealth.label
-            : "",
       };
     }
     if (!json.success || !json.data) {
@@ -302,10 +276,6 @@ function callApi(username) {
         ? Number(json.data.totalViews)
         : null,
       avatarUrl: json.data.avatarUrl || "",
-      accountHealthLabel:
-        json.data.accountHealth && json.data.accountHealth.label
-          ? json.data.accountHealth.label
-          : "KHÔNG XÁC ĐỊNH",
     };
   } catch (err) {
     return { error: err.message || "Network error" };
@@ -313,6 +283,40 @@ function callApi(username) {
 }
 
 // ─── UTILS ─────────────────────────────────────────────────────────────────
+
+function isTargetSheet(sheet) {
+  return Boolean(sheet) && sheet.getName() === SHEET_NAME;
+}
+
+function getOutputRange(sheet, row) {
+  if (!isTargetSheet(sheet)) {
+    throw new Error('Chỉ được ghi vào sheet "' + SHEET_NAME + '".');
+  }
+  return sheet.getRange(row, OUTPUT_START_COLUMN, 1, OUTPUT_COLUMN_COUNT);
+}
+
+/**
+ * Điểm ghi dữ liệu duy nhất: C:G trên sheet Account.
+ * formulas là tùy chọn và chỉ được áp dụng trong cùng phạm vi C:G.
+ */
+function writeOutputRow(sheet, row, values, formulas) {
+  if (!values || values.length !== OUTPUT_COLUMN_COUNT) {
+    throw new Error("Dữ liệu ghi phải có đúng 5 giá trị cho C:G.");
+  }
+
+  getOutputRange(sheet, row).setValues([values]);
+
+  if (formulas) {
+    if (formulas.length !== OUTPUT_COLUMN_COUNT) {
+      throw new Error("Danh sách công thức phải có đúng 5 phần tử cho C:G.");
+    }
+    formulas.forEach(function (formula, index) {
+      if (formula) {
+        sheet.getRange(row, OUTPUT_START_COLUMN + index).setFormula(formula);
+      }
+    });
+  }
+}
 
 function getSheet() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();

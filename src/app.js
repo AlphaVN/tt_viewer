@@ -102,7 +102,8 @@ app.get('/health', (req, res) => {
     cache: cache.stats(),
     scraper: {
       browserEnabled: scraperConfig.browserEnabled,
-      mode: 'http-json',
+      mode: 'http',
+      profileStrategy: scraperConfig.profileStrategy,
       viewsLimit: scraperConfig.viewsLimit,
     },
     timestamp: new Date().toISOString(),

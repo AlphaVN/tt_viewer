@@ -2,16 +2,21 @@
  * TikTok profile service — HTTP-only edition.
  *
  * Chromium is deliberately not used: profile data and recent public posts are
- * fetched as JSON through a lightweight HTTP provider. Provider requests are
- * serialized because the public endpoint allows roughly one request/second.
+ * fetched through plain HTTP. Profile metadata is read directly from TikTok's
+ * embedded page JSON, with a lightweight JSON provider as fallback. Provider
+ * requests are serialized because its public endpoint allows roughly one
+ * request/second.
  */
 
 import axios from 'axios';
 
 const DEFAULT_PROVIDER_URL = 'https://www.tikwm.com';
+const DEFAULT_TIKTOK_WEB_URL = 'https://www.tiktok.com';
 const DEFAULT_REQUEST_INTERVAL_MS = 1_100;
 const DEFAULT_VIEWS_LIMIT = 30;
 const MAX_VIEWS_LIMIT = 35;
+const MISSING_USER_STATUS_CODES = new Set([10202, 10221, 10223]);
+const MISSING_USER_MESSAGE_RE = /user.*(?:not found|does not exist|doesn['’]t exist|banned)|account.*(?:not found|couldn['’]t be found)|couldn['’]t find (?:this |the )?account/i;
 
 function intFromEnv(name, fallback, min, max) {
   const value = Number.parseInt(process.env[name] ?? '', 10);
@@ -20,6 +25,7 @@ function intFromEnv(name, fallback, min, max) {
 }
 
 const PROVIDER_URL = (process.env.TIKTOK_HTTP_API_URL || DEFAULT_PROVIDER_URL).replace(/\/$/, '');
+const TIKTOK_WEB_URL = (process.env.TIKTOK_WEB_URL || DEFAULT_TIKTOK_WEB_URL).replace(/\/$/, '');
 const REQUEST_INTERVAL_MS = intFromEnv(
   'TIKTOK_REQUEST_INTERVAL_MS',
   DEFAULT_REQUEST_INTERVAL_MS,
@@ -75,6 +81,21 @@ function accountNotFoundError(username) {
       },
     },
   );
+}
+
+function invalidUsernameError() {
+  return serviceError(
+    'Username is missing.',
+    'INVALID_USERNAME',
+    400,
+  );
+}
+
+function normalizeUsername(username) {
+  if (typeof username !== 'string') throw invalidUsernameError();
+  const clean = username.trim().replace(/^@/, '').trim();
+  if (!clean) throw invalidUsernameError();
+  return clean;
 }
 
 /**
@@ -222,26 +243,187 @@ function buildProfile(user, stats, source = 'tikwm') {
   return profile;
 }
 
-function parseUniversalData(data) {
-  if (!data) return null;
+function isStatValue(value) {
+  if (typeof value === 'number') return Number.isFinite(value) && value >= 0;
+  return typeof value === 'string' && /^\d+$/.test(value);
+}
 
-  const userInfo = data.__DEFAULT_SCOPE__?.['webapp.user-detail']?.userInfo;
-  if (userInfo?.user) {
-    return buildProfile(userInfo.user, userInfo.stats ?? userInfo.statsV2, 'tiktok-html');
+function hasStatValue(stats, key) {
+  return Object.hasOwn(stats, key) && isStatValue(stats[key]);
+}
+
+function isCompleteStats(stats) {
+  if (!stats || typeof stats !== 'object' || Array.isArray(stats)) return false;
+  return ['followerCount', 'fans'].some(key => hasStatValue(stats, key))
+    && hasStatValue(stats, 'followingCount')
+    && hasStatValue(stats, 'videoCount')
+    && ['heartCount', 'heart', 'diggCount'].some(key => hasStatValue(stats, key));
+}
+
+function selectUserInfoStats(userInfo) {
+  const rounded = userInfo?.stats;
+  const exact = userInfo?.statsV2;
+  const stats = rounded && typeof rounded === 'object' && !Array.isArray(rounded)
+    ? { ...rounded }
+    : {};
+
+  if (exact && typeof exact === 'object' && !Array.isArray(exact)) {
+    for (const [key, value] of Object.entries(exact)) {
+      if (isStatValue(value)) stats[key] = value;
+    }
   }
 
-  for (const value of Object.values(data)) {
+  return isCompleteStats(stats) ? stats : null;
+}
+
+function isCompleteUserInfo(userInfo) {
+  return Boolean(userInfo?.user?.uniqueId || userInfo?.user?.id)
+    && Boolean(selectUserInfoStats(userInfo));
+}
+
+function normalizeUserInfoStats(userInfo) {
+  const exactStats = selectUserInfoStats(userInfo);
+  if (!exactStats) return null;
+
+  const stats = Object.fromEntries(
+    Object.entries(exactStats).map(([key, value]) => {
+      if (typeof value !== 'string' || !/^\d+$/.test(value)) return [key, value];
+      const number = Number(value);
+      return [key, Number.isSafeInteger(number) ? number : value];
+    }),
+  );
+  return { ...userInfo, stats };
+}
+
+function extractScriptJson(html, id) {
+  const escapedId = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pattern = new RegExp(
+    `<script\\b(?=[^>]*\\bid\\s*=\\s*["']${escapedId}["'])[^>]*>([\\s\\S]*?)<\\/script>`,
+    'i',
+  );
+  const match = html.match(pattern);
+  if (!match) return null;
+  return JSON.parse(match[1].trim());
+}
+
+function parseUniversalUserInfo(data) {
+  const detail = data?.__DEFAULT_SCOPE__?.['webapp.user-detail'];
+  if (detail?.userInfo?.user) {
+    return { userInfo: detail.userInfo, source: 'tiktok-universal-data' };
+  }
+
+  const statusCode = Number(detail?.statusCode);
+  if (Number.isFinite(statusCode) && statusCode !== 0) {
+    return {
+      error: {
+        statusCode,
+        statusMessage: String(detail.statusMsg || ''),
+      },
+    };
+  }
+
+  for (const value of Object.values(data || {})) {
     const module = value?.UserModule;
     if (!module?.users) continue;
     const username = Object.keys(module.users)[0];
-    if (username) return buildProfile(module.users[username], module.stats?.[username], 'tiktok-html');
+    if (!username) continue;
+    return {
+      userInfo: {
+        user: module.users[username],
+        stats: module.stats?.[username],
+      },
+      source: 'tiktok-user-module',
+    };
   }
 
   return null;
 }
 
+function parseNextUserInfo(data) {
+  const pageProps = data?.props?.pageProps;
+  const userInfo = pageProps?.userInfo;
+  if (userInfo?.user) {
+    return { userInfo, source: 'tiktok-next-data' };
+  }
+
+  const statusCode = Number(userInfo?.statusCode ?? pageProps?.statusCode);
+  if (Number.isFinite(statusCode) && statusCode !== 0) {
+    return {
+      error: {
+        statusCode,
+        statusMessage: String(userInfo?.statusMsg ?? pageProps?.statusMsg ?? ''),
+      },
+    };
+  }
+
+  return null;
+}
+
+function isMissingUserPage(result) {
+  if (!result?.error) return false;
+  return MISSING_USER_STATUS_CODES.has(result.error.statusCode)
+    || MISSING_USER_MESSAGE_RE.test(result.error.statusMessage);
+}
+
+function parseUserProfileHtml(html, username) {
+  const parsers = [
+    ['__UNIVERSAL_DATA_FOR_REHYDRATION__', parseUniversalUserInfo],
+    ['__NEXT_DATA__', parseNextUserInfo],
+  ];
+  let jsonError;
+  let incompleteUserInfo = false;
+
+  for (const [scriptId, parser] of parsers) {
+    let data;
+    try {
+      data = extractScriptJson(html, scriptId);
+    } catch (error) {
+      jsonError = error;
+      continue;
+    }
+    if (!data) continue;
+
+    const result = parser(data);
+    if (result?.userInfo) {
+      if (isCompleteUserInfo(result.userInfo)) return result;
+      incompleteUserInfo = true;
+      continue;
+    }
+    if (isMissingUserPage(result)) throw accountNotFoundError(username);
+  }
+
+  if (incompleteUserInfo) {
+    throw serviceError(
+      'TikTok trả về hồ sơ thiếu user hoặc các trường thống kê bắt buộc.',
+      'INVALID_TIKTOK_DATA',
+      502,
+    );
+  }
+
+  if (jsonError) {
+    throw serviceError(
+      `Không đọc được dữ liệu hồ sơ: ${jsonError.message}`,
+      'PARSE_ERROR',
+      502,
+    );
+  }
+
+  throw serviceError(
+    'TikTok không trả về dữ liệu hồ sơ nhận dạng được qua HTTP.',
+    'PARSE_ERROR',
+    503,
+  );
+}
+
 async function fetchProfileFromProvider(username) {
   const data = await providerGet('/api/user/info', { unique_id: username }, { username });
+  if (!data?.user || (!data.user.uniqueId && !data.user.id) || !isCompleteStats(data.stats)) {
+    throw serviceError(
+      'Nguồn dữ liệu trả về hồ sơ thiếu user hoặc các trường thống kê bắt buộc.',
+      'INVALID_PROVIDER_DATA',
+      502,
+    );
+  }
   const profile = buildProfile(data.user, data.stats);
   if (!profile) {
     throw serviceError(
@@ -254,15 +436,16 @@ async function fetchProfileFromProvider(username) {
 }
 
 /**
- * Best-effort fallback for profile fields only. This still uses plain HTTP and
- * never launches a browser. Recent views continue to come from the JSON API.
+ * Fetch profile fields directly from TikTok using plain HTTP. Recent views
+ * continue to come from the JSON API.
  */
-async function fetchProfileFromTikTokHtml(username) {
+async function requestUserProfileInfo(username) {
   let response;
   try {
-    response = await axios.get(`https://www.tiktok.com/@${encodeURIComponent(username)}`, {
+    response = await axios.get(`${TIKTOK_WEB_URL}/@${encodeURIComponent(username)}`, {
       timeout: 15_000,
       maxRedirects: 5,
+      maxContentLength: 5 * 1024 * 1024,
       headers: {
         'User-Agent': USER_AGENTS[0],
         Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -280,25 +463,32 @@ async function fetchProfileFromTikTokHtml(username) {
   }
 
   const html = String(response.data || '');
-  const match = html.match(
-    /<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__"[^>]*>([\s\S]*?)<\/script>/,
-  );
-  if (!match) {
+  return parseUserProfileHtml(html, username);
+}
+
+/**
+ * Fetch TikTok user metadata in the same `{ user, stats }` shape returned by
+ * drawrowfly/tiktok-scraper's getUserProfileInfo. Exact statsV2 values are
+ * normalized into `stats` when available. Both TikTok's current universal-data
+ * page format and the legacy __NEXT_DATA__ format are accepted.
+ */
+export async function getUserProfileInfo(username) {
+  const clean = normalizeUsername(username);
+  const { userInfo } = await requestUserProfileInfo(clean);
+  return normalizeUserInfoStats(userInfo);
+}
+
+async function fetchProfileFromTikTokHtml(username) {
+  const { userInfo, source } = await requestUserProfileInfo(username);
+  const profile = buildProfile(userInfo.user, selectUserInfoStats(userInfo), source);
+  if (!profile) {
     throw serviceError(
-      'TikTok không trả về dữ liệu hồ sơ qua HTTP.',
-      'PARSE_ERROR',
-      503,
+      'TikTok trả về hồ sơ không đầy đủ.',
+      'INVALID_TIKTOK_DATA',
+      502,
     );
   }
-
-  try {
-    const profile = parseUniversalData(JSON.parse(match[1]));
-    if (profile) return profile;
-  } catch (error) {
-    throw serviceError(`Không đọc được dữ liệu hồ sơ: ${error.message}`, 'PARSE_ERROR', 502);
-  }
-
-  throw serviceError('Cấu trúc hồ sơ TikTok không nhận dạng được.', 'PARSE_ERROR', 502);
+  return profile;
 }
 
 async function fetchRecentViews(username, limit = VIEWS_LIMIT) {
@@ -337,15 +527,21 @@ async function fetchRecentViews(username, limit = VIEWS_LIMIT) {
  * Fetch a TikTok profile and optionally sum views from recent public videos.
  */
 export async function fetchUserProfile(username, { includeViews = false } = {}) {
-  const clean = username.replace(/^@/, '').trim();
+  const clean = normalizeUsername(username);
 
   let profile;
   try {
-    profile = await fetchProfileFromProvider(clean);
-  } catch (providerError) {
-    if (providerError.code === 'USER_NOT_FOUND') throw providerError;
-    console.warn(`[TikTok HTTP] Provider profile lỗi (${providerError.message}); thử HTML fallback.`);
     profile = await fetchProfileFromTikTokHtml(clean);
+  } catch (tiktokError) {
+    console.warn(`[TikTok HTTP] TikTok profile lỗi (${tiktokError.message}); thử provider fallback.`);
+    try {
+      profile = await fetchProfileFromProvider(clean);
+    } catch (providerError) {
+      if (tiktokError.code === 'USER_NOT_FOUND' && providerError.code === 'USER_NOT_FOUND') {
+        throw tiktokError;
+      }
+      throw providerError;
+    }
   }
 
   if (!includeViews) return profile;
@@ -384,6 +580,8 @@ export async function fetchUserProfile(username, { includeViews = false } = {}) 
 
 export const scraperConfig = Object.freeze({
   providerUrl: PROVIDER_URL,
+  tiktokWebUrl: TIKTOK_WEB_URL,
+  profileStrategy: 'tiktok-html-with-provider-fallback',
   requestIntervalMs: REQUEST_INTERVAL_MS,
   retries: PROVIDER_RETRIES,
   viewsLimit: VIEWS_LIMIT,

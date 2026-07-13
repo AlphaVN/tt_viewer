@@ -3,8 +3,10 @@
 API Node.js nhẹ để lấy thống kê profile TikTok, tổng view của các video công
 khai gần nhất và trạng thái truy cập của tài khoản.
 
-API **không dùng Chromium/Playwright**. Dữ liệu được lấy qua HTTP JSON, các
-request ra nguồn dữ liệu được xếp hàng và retry để phù hợp với server ít RAM.
+API **không dùng Chromium/Playwright**. Thông tin profile được đọc trực tiếp từ
+JSON nhúng trong trang TikTok; API JSON nhẹ được dùng làm fallback và để lấy
+recent views. Các request ra provider được xếp hàng và retry để phù hợp với
+server ít RAM.
 
 ## Khởi động
 
@@ -88,33 +90,34 @@ nguồn không trả danh sách video, request trả lỗi thay vì báo tổng 
 phạm nội bộ hay “account check” trong ứng dụng TikTok.
 
 Với tài khoản không tồn tại, lỗi `404 USER_NOT_FOUND` vẫn kèm
-`error.details.accountHealth`, nhờ đó Google Sheet có thể cập nhật cột tình
-trạng chính xác.
+`error.details.accountHealth` để client có thể nhận biết chính xác lỗi này.
 
 ## Google Sheet
 
-File [excel/TikTokFetch.gs](excel/TikTokFetch.gs) dùng bố cục:
+File [excel/TikTokFetch.gs](excel/TikTokFetch.gs) chỉ ghi dữ liệu vào sheet
+`Account`, với bố cục:
 
 - C: followers
 - D: likes
 - E: số video
 - F: recent views
 - G: avatar
-- I: tình trạng/sức khỏe tài khoản
-- K: username
+- K: username (chỉ đọc)
+- R: trạng thái dùng để bỏ qua hàng (chỉ đọc)
 
 Đặt `API_BASE_URL` trong file rồi chạy `setupTriggers()` một lần. Script sẽ:
 
-- ghi `accountHealth.label` vào cột I;
-- kiểm tra lại tài khoản từng được đánh dấu không tồn tại;
-- giữ nguyên dữ liệu cũ khi chỉ gặp lỗi mạng/provider;
-- chỉ ghi số 0 khi API xác nhận `USER_NOT_FOUND`.
+- chỉ thay đổi nội dung ô C:G;
+- không ghi note, định dạng, chiều cao hàng hoặc ô ngoài C:G;
+- khôi phục nội dung C:G cũ khi gặp lỗi mạng/provider;
+- chỉ ghi `0` vào C:F và `—` vào G khi API xác nhận `USER_NOT_FOUND`.
 
 ## Cấu hình
 
 | Biến | Mặc định | Mô tả |
 | --- | --- | --- |
 | `PORT` | `3000` | Port lắng nghe |
+| `TIKTOK_WEB_URL` | `https://www.tiktok.com` | Web origin dùng để lấy profile trực tiếp |
 | `TIKTOK_HTTP_API_URL` | `https://www.tikwm.com` | HTTP JSON provider |
 | `TIKTOK_REQUEST_INTERVAL_MS` | `1100` | Khoảng cách tối thiểu giữa hai request provider |
 | `TIKTOK_HTTP_RETRIES` | `3` | Số lần thử lại, từ 1 đến 5 |
@@ -135,4 +138,4 @@ dependencies. Health check là `/health`.
 npm test
 ```
 
-Test dùng HTTP provider giả lập cục bộ nên không phụ thuộc TikTok hay mạng ngoài.
+Test dùng trang TikTok và HTTP provider giả lập cục bộ nên không phụ thuộc mạng ngoài.
