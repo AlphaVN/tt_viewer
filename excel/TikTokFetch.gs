@@ -19,8 +19,8 @@
 
 // ─── CONFIG ────────────────────────────────────────────────────────────────
 
-var API_BASE_URL = "API CUA BAN";
-var SHEET_NAME = "Account";
+var API_BASE_URL = "https://tt-viewer.onrender.com";
+var SHEET_NAME = "Accounts";
 var DATA_START_ROW = 2;
 var OUTPUT_START_COLUMN = 3; // C
 var OUTPUT_COLUMN_COUNT = 5; // C:G
