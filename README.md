@@ -94,7 +94,7 @@ Với tài khoản không tồn tại, lỗi `404 USER_NOT_FOUND` vẫn kèm
 
 ## Google Sheet
 
-File [excel/TikTokFetch.gs](excel/TikTokFetch.gs) chỉ ghi dữ liệu vào sheet
+File [excel/TikTokFetch.gs](excel/TikTokFetch.gs) ghi dữ liệu vào sheet
 `Account`, với bố cục:
 
 - C: followers
@@ -102,13 +102,14 @@ File [excel/TikTokFetch.gs](excel/TikTokFetch.gs) chỉ ghi dữ liệu vào she
 - E: số video
 - F: recent views
 - G: avatar
+- I: trạng thái dùng để bỏ qua hàng (chỉ đọc)
 - K: username (chỉ đọc)
-- R: trạng thái dùng để bỏ qua hàng (chỉ đọc)
+- R: trạng thái kết quả và note lỗi
 
 Đặt `API_BASE_URL` trong file rồi chạy `setupTriggers()` một lần. Script sẽ:
 
-- chỉ thay đổi nội dung ô C:G;
-- không ghi note, định dạng, chiều cao hàng hoặc ô ngoài C:G;
+- chỉ thay đổi nội dung ô C:G và trạng thái/note ở R;
+- không ghi vào cột I, K hoặc ô ngoài C:G và R;
 - khôi phục nội dung C:G cũ khi gặp lỗi mạng/provider;
 - chỉ ghi `0` vào C:F và `—` vào G khi API xác nhận `USER_NOT_FOUND`.
 

@@ -10,10 +10,11 @@
  *
  * Layout (1-indexed):
  *   C(3)=Followers  D(4)=Likes  E(5)=Videos  F(6)=Views  G(7)=Avatar
- *   K(11)=Username (chỉ đọc)
+ *   I(9)=Trạng thái dùng để bỏ qua (chỉ đọc)
+ *   K(11)=Username (chỉ đọc)  R(18)=Status (đọc/ghi)
  *
- * Script chỉ ghi vào C:G của sheet "Account". Không ghi note, định dạng,
- * kích thước hàng hoặc bất kỳ ô nào ngoài phạm vi này.
+ * Script chỉ ghi dữ liệu thống kê vào C:G và trạng thái/note vào R của sheet
+ * "Account". Không ghi vào ô nào khác.
  */
 
 // ─── CONFIG ────────────────────────────────────────────────────────────────
@@ -26,7 +27,8 @@ var OUTPUT_COLUMN_COUNT = 5; // C:G
 
 var COL = {
   USERNAME: 11, // K
-  STATUS: 18,   // R (chỉ đọc để quyết định bỏ qua hàng)
+  SKIP_STATUS: 9, // I (chỉ đọc để quyết định bỏ qua hàng)
+  STATUS: 18,     // R (đọc/ghi trạng thái kết quả)
   FOLLOWERS: 3, // C
   LIKES: 4,     // D
   VIDEOS: 5,   // E
@@ -163,10 +165,10 @@ function fetchSingleRow(sheet, row) {
   // Bỏ qua nếu không có username
   if (!rawUsername) return "skipped";
 
-  // Chỉ đọc trạng thái hiện tại; script không ghi vào cột này.
-  var status = sheet.getRange(row, COL.STATUS).getValue().toString().trim();
-  if (SKIP_STATUSES.indexOf(status) !== -1) {
-    Logger.log("⏭ Hàng " + row + ': bỏ qua vì trạng thái = "' + status + '"');
+  // Cột I chỉ dùng để quyết định bỏ qua, không ghi vào cột I.
+  var skipStatus = sheet.getRange(row, COL.SKIP_STATUS).getValue().toString().trim();
+  if (SKIP_STATUSES.indexOf(skipStatus) !== -1) {
+    Logger.log("⏭ Hàng " + row + ': bỏ qua vì trạng thái = "' + skipStatus + '"');
     return "skipped";
   }
 
@@ -178,6 +180,7 @@ function fetchSingleRow(sheet, row) {
   var previous = {
     values: outputRange.getValues()[0],
     formulas: outputRange.getFormulas()[0],
+    status: getStatusRange(sheet, row).getValue(),
   };
 
   // Loading — chỉ ghi C:G.
@@ -191,10 +194,17 @@ function fetchSingleRow(sheet, row) {
     if (result.code === "USER_NOT_FOUND") {
       // Chỉ ghi 0 khi đã xác nhận tài khoản không tồn tại/không truy cập được.
       writeOutputRow(sheet, row, [0, 0, 0, 0, "—"]);
+      getStatusRange(sheet, row).setValue(
+        result.accountHealthLabel || "KHÔNG TÌM THẤY",
+      );
     } else {
       // Lỗi mạng/provider: khôi phục dữ liệu gần nhất thay vì biến thành 0 giả.
       writeOutputRow(sheet, row, previous.values, previous.formulas);
+      getStatusRange(sheet, row).setValue(previous.status);
     }
+    getStatusRange(sheet, row).setNote(
+      "Lần kiểm tra gần nhất lỗi: " + result.error,
+    );
     Logger.log("  ❌ " + result.error);
     SpreadsheetApp.flush();
     return "error";
@@ -219,6 +229,9 @@ function fetchSingleRow(sheet, row) {
     ],
     ["", "", "", "", avatarFormula],
   );
+  getStatusRange(sheet, row)
+    .setValue(result.accountHealthLabel || "KHÔNG XÁC ĐỊNH")
+    .clearNote();
 
   Logger.log(
     "  ✅ " +
@@ -258,6 +271,13 @@ function callApi(username) {
             ? json.error.message
             : "HTTP " + code,
         code: json.error && json.error.code ? json.error.code : "HTTP_" + code,
+        accountHealthLabel:
+          json.error &&
+          json.error.details &&
+          json.error.details.accountHealth &&
+          json.error.details.accountHealth.label
+            ? json.error.details.accountHealth.label
+            : "",
       };
     }
     if (!json.success || !json.data) {
@@ -276,6 +296,10 @@ function callApi(username) {
         ? Number(json.data.totalViews)
         : null,
       avatarUrl: json.data.avatarUrl || "",
+      accountHealthLabel:
+        json.data.accountHealth && json.data.accountHealth.label
+          ? json.data.accountHealth.label
+          : "KHÔNG XÁC ĐỊNH",
     };
   } catch (err) {
     return { error: err.message || "Network error" };
@@ -293,6 +317,13 @@ function getOutputRange(sheet, row) {
     throw new Error('Chỉ được ghi vào sheet "' + SHEET_NAME + '".');
   }
   return sheet.getRange(row, OUTPUT_START_COLUMN, 1, OUTPUT_COLUMN_COUNT);
+}
+
+function getStatusRange(sheet, row) {
+  if (!isTargetSheet(sheet)) {
+    throw new Error('Chỉ được ghi vào sheet "' + SHEET_NAME + '".');
+  }
+  return sheet.getRange(row, COL.STATUS);
 }
 
 /**
