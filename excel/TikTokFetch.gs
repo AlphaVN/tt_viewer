@@ -186,6 +186,7 @@ function fetchSingleRow(sheet, row) {
     if (result.code === "USER_NOT_FOUND") {
       // Chỉ ghi 0 khi đã xác nhận tài khoản không tồn tại/không truy cập được.
       writeOutputRow(sheet, row, [0, 0, 0, 0, "—"]);
+      clearVideoColumns(sheet, row);
       getStatusRange(sheet, row).setValue(
         result.accountHealthLabel || "KHÔNG TÌM THẤY",
       );
@@ -221,6 +222,30 @@ function fetchSingleRow(sheet, row) {
     ],
     ["", "", "", "", avatarFormula],
   );
+
+  // Ghi chi tiết 30 video bắt đầu từ cột T (cột 20)
+  var videoValues = [];
+  var maxVideos = 30;
+  var fieldsPerVideo = 8;
+  for (var i = 0; i < maxVideos; i++) {
+    if (result.videos && i < result.videos.length) {
+      var v = result.videos[i];
+      videoValues.push(v.link || "");
+      videoValues.push(v.region || "");
+      videoValues.push(v.play_count !== undefined && v.play_count !== null ? Number(v.play_count) : 0);
+      videoValues.push(v.digg_count !== undefined && v.digg_count !== null ? Number(v.digg_count) : 0);
+      videoValues.push(v.comment_count !== undefined && v.comment_count !== null ? Number(v.comment_count) : 0);
+      videoValues.push(v.share_count !== undefined && v.share_count !== null ? Number(v.share_count) : 0);
+      videoValues.push(v.download_count !== undefined && v.download_count !== null ? Number(v.download_count) : 0);
+      videoValues.push(v.collect_count !== undefined && v.collect_count !== null ? Number(v.collect_count) : 0);
+    } else {
+      for (var f = 0; f < fieldsPerVideo; f++) {
+        videoValues.push("");
+      }
+    }
+  }
+  sheet.getRange(row, 20, 1, maxVideos * fieldsPerVideo).setValues([videoValues]);
+
   getStatusRange(sheet, row)
     .setValue(result.accountHealthLabel || "KHÔNG XÁC ĐỊNH")
     .clearNote();
@@ -289,6 +314,7 @@ function callApi(username) {
         ? Number(json.data.totalViews)
         : null,
       avatarUrl: json.data.avatarUrl || "",
+      videos: json.data.videos || [],
       accountHealthLabel:
         json.data.accountHealth && json.data.accountHealth.label
           ? json.data.accountHealth.label
@@ -367,4 +393,11 @@ function onOpen() {
     .addSeparator()
     .addItem("⚙️ Cài trigger tự động", "setupTriggers")
     .addToUi();
+}
+function clearVideoColumns(sheet, row) {
+  var emptyValues = [];
+  for (var i = 0; i < 240; i++) {
+    emptyValues.push("");
+  }
+  sheet.getRange(row, 20, 1, 240).setValues([emptyValues]);
 }

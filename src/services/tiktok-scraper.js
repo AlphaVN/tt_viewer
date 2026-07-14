@@ -624,6 +624,50 @@ async function fetchProfileFromTikTokHtml(username, signal) {
   return profile;
 }
 
+async function fetchRecentViews(username, limit = VIEWS_LIMIT, signal) {
+  const data = await providerGet(
+    "/user/posts",
+    {
+      unique_id: username,
+      count: limit,
+      cursor: 0,
+    },
+    { username, signal },
+  );
+
+  const videos = Array.isArray(data.videos) ? data.videos.slice(0, limit) : [];
+  
+  const totalViews = videos.reduce(
+    (total, video) => total + nonNegativeInt(video.play_count),
+    0,
+  );
+  
+  const newestCreateTime = videos.reduce(
+    (newest, video) => Math.max(newest, nonNegativeInt(video.create_time)),
+    0,
+  );
+
+  const mappedVideos = videos.map(video => ({
+    link: `https://www.tiktok.com/@${username}/video/${video.video_id}`,
+    region: video.region || "",
+    play_count: nonNegativeInt(video.play_count),
+    digg_count: nonNegativeInt(video.digg_count),
+    comment_count: nonNegativeInt(video.comment_count),
+    share_count: nonNegativeInt(video.share_count),
+    download_count: nonNegativeInt(video.download_count),
+    collect_count: nonNegativeInt(video.collect_count),
+  }));
+
+  return {
+    totalViews,
+    videos: mappedVideos,
+    videoCount: videos.length,
+    lastVideoAt: newestCreateTime
+      ? new Date(newestCreateTime * 1_000).toISOString()
+      : null,
+  };
+}
+
 export async function fetchUserProfile(
   username,
   { includeViews = false, signal } = {},
@@ -659,13 +703,32 @@ export async function fetchUserProfile(
       profile.accountHealth = createAccountHealth(profile, {
         viewsChecked: false,
       });
-    } else {
-      profile.totalViews = profile.diggCount;
+      profile.videos = [];
+    } else if (profile.videoCount === 0) {
+      profile.totalViews = 0;
       profile.viewsVideoCount = 0;
       profile.viewsScope = "recent_public_videos";
       profile.accountHealth = createAccountHealth(profile, {
         viewsChecked: true,
       });
+      profile.videos = [];
+    } else {
+      const views = await fetchRecentViews(clean, VIEWS_LIMIT, signal);
+      if (views.videoCount === 0) {
+        throw serviceError(
+          "Tài khoản có video nhưng nguồn dữ liệu không trả về danh sách video công khai.",
+          "VIEWS_UNAVAILABLE",
+          503,
+        );
+      }
+      profile.totalViews = views.totalViews;
+      profile.viewsVideoCount = views.videoCount;
+      profile.viewsScope = "recent_public_videos";
+      profile.accountHealth = createAccountHealth(profile, {
+        viewsChecked: true,
+        lastVideoAt: views.lastVideoAt,
+      });
+      profile.videos = views.videos;
     }
   }
 

@@ -297,11 +297,14 @@ test('sums recent video views and returns account health', async () => {
   const profile = await fetchUserProfile('demo', { includeViews: true });
 
   assert.equal(profile.totalViews, 4_000);
-  assert.equal(profile.viewsVideoCount, 0);
+  assert.equal(profile.viewsVideoCount, 2);
   assert.equal(profile.viewsScope, 'recent_public_videos');
   assert.equal(profile.accountHealth.status, 'ACTIVE');
   assert.equal(profile.accountHealth.canReadViews, true);
-  assert.equal(profile.accountHealth.lastVideoAt, null);
+  assert.equal(profile.accountHealth.lastVideoAt, '2023-11-14T22:13:20.000Z');
+  assert.equal(profile.videos.length, 2);
+  assert.equal(profile.videos[0].link, 'https://www.tiktok.com/@demo/video/v1');
+  assert.equal(profile.videos[0].play_count, 1250);
 });
 
 test('does not claim views were checked on a profile-only request', async () => {
