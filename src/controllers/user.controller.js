@@ -8,6 +8,7 @@
  */
 
 import { fetchUserProfile } from '../services/tiktok-scraper.js';
+import { logUserError, logUserSuccess } from '../services/request-log.js';
 
 const PROFILE_RESPONSE_TIMEOUT_MS = 5_000;
 
@@ -74,6 +75,30 @@ function errorResponse(res, message, status = 500, code = 'INTERNAL_ERROR', deta
   });
 }
 
+function requestDurationMs(req) {
+  return Math.max(0, Date.now() - (req.requestStartedAt || Date.now()));
+}
+
+function logSuccess(req, action, username, result, status = 200) {
+  logUserSuccess(req, {
+    username,
+    action,
+    status,
+    durationMs: requestDurationMs(req),
+    result,
+  });
+}
+
+function logFailure(req, action, username, err) {
+  logUserError(req, {
+    username,
+    action,
+    status: err.status || 500,
+    durationMs: requestDurationMs(req),
+    error: err,
+  });
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/user/:username/followers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -81,11 +106,14 @@ export async function getFollowers(req, res) {
   const { username } = req.params;
   try {
     const { profile } = await getProfile(username);
-    return successResponse(res, {
+    const data = {
       username: profile.username,
       followers: profile.followers,
-    });
+    };
+    logSuccess(req, 'followers', username, data);
+    return successResponse(res, data);
   } catch (err) {
+    logFailure(req, 'followers', username, err);
     return errorResponse(res, err.message, err.status || 500, err.code || 'INTERNAL_ERROR', err.details);
   }
 }
@@ -97,11 +125,14 @@ export async function getLikes(req, res) {
   const { username } = req.params;
   try {
     const { profile } = await getProfile(username);
-    return successResponse(res, {
+    const data = {
       username: profile.username,
       likes: profile.likes,
-    });
+    };
+    logSuccess(req, 'likes', username, data);
+    return successResponse(res, data);
   } catch (err) {
+    logFailure(req, 'likes', username, err);
     return errorResponse(res, err.message, err.status || 500, err.code || 'INTERNAL_ERROR', err.details);
   }
 }
@@ -113,11 +144,14 @@ export async function getVideoCount(req, res) {
   const { username } = req.params;
   try {
     const { profile } = await getProfile(username);
-    return successResponse(res, {
+    const data = {
       username: profile.username,
       videoCount: profile.videoCount,
-    });
+    };
+    logSuccess(req, 'videos', username, data);
+    return successResponse(res, data);
   } catch (err) {
+    logFailure(req, 'videos', username, err);
     return errorResponse(res, err.message, err.status || 500, err.code || 'INTERNAL_ERROR', err.details);
   }
 }
@@ -131,8 +165,10 @@ export async function getFullProfile(req, res) {
   const includeViews = req.query.views === '1' || req.query.views === 'true';
   try {
     const { profile } = await getProfile(username, includeViews);
+    logSuccess(req, 'profile', username, profile);
     return successResponse(res, profile);
   } catch (err) {
+    logFailure(req, 'profile', username, err);
     return errorResponse(res, err.message, err.status || 500, err.code || 'INTERNAL_ERROR', err.details);
   }
 }
@@ -147,7 +183,7 @@ export async function getViews(req, res) {
     const note = profile.privateAccount
       ? 'Tài khoản riêng tư, không thể đọc lượt xem video.'
       : `Tổng view từ ${profile.viewsVideoCount} video công khai gần nhất.`;
-    return successResponse(res, {
+    const data = {
       username: profile.username,
       totalViews: profile.totalViews,
       videoCount: profile.videoCount,
@@ -156,8 +192,11 @@ export async function getViews(req, res) {
       viewsScope: profile.viewsScope,
       accountHealth: profile.accountHealth,
       note,
-    });
+    };
+    logSuccess(req, 'views', username, data);
+    return successResponse(res, data);
   } catch (err) {
+    logFailure(req, 'views', username, err);
     return errorResponse(res, err.message, err.status || 500, err.code || 'INTERNAL_ERROR', err.details);
   }
 }
@@ -169,11 +208,14 @@ export async function getAccountHealth(req, res) {
   const { username } = req.params;
   try {
     const { profile } = await getProfile(username);
-    return successResponse(res, {
+    const data = {
       username: profile.username,
       accountHealth: profile.accountHealth,
-    });
+    };
+    logSuccess(req, 'health', username, data);
+    return successResponse(res, data);
   } catch (err) {
+    logFailure(req, 'health', username, err);
     return errorResponse(res, err.message, err.status || 500, err.code || 'INTERNAL_ERROR', err.details);
   }
 }

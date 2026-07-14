@@ -12,6 +12,7 @@ import {
   getViews,
   getAccountHealth,
 } from '../controllers/user.controller.js';
+import { logInvalidUsername } from '../services/request-log.js';
 
 const router = Router();
 
@@ -21,6 +22,7 @@ const router = Router();
 router.param('username', (req, res, next, username) => {
   const clean = username.replace(/^@/, '').trim();
   if (!clean || !/^[\w.]{1,24}$/.test(clean)) {
+    logInvalidUsername(req, username);
     return res.status(400).json({
       success: false,
       error: {

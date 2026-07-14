@@ -2,11 +2,10 @@
  * TikTok User Stats — Google Apps Script (Google Sheets)
  *
  * Triggers:
- *   1. Mỗi 10 phút   → fetchTikTokStats() toàn bộ
- *   2. Khi mở file   → fetchTikTokStats() toàn bộ
- *   3. Cột K thay đổi → chỉ fetch đúng hàng đó
+ *   1. Khi mở file   → fetchTikTokStats() toàn bộ
+ *   2. Cột K thay đổi → chỉ fetch đúng hàng đó
  *
- * Chạy setupTriggers() 1 lần duy nhất để kích hoạt cả 3 trigger.
+ * Chạy setupTriggers() 1 lần duy nhất để kích hoạt cả 2 trigger.
  *
  * Layout (1-indexed):
  *   C(3)=Followers  D(4)=Likes  E(5)=Videos  F(6)=Views  G(7)=Avatar
@@ -41,7 +40,7 @@ var SKIP_STATUSES = ["BỊ BAN", "Loại bảo mật", "Outr beta"];
 // ─── TRIGGER SETUP (chỉ chạy 1 lần) ───────────────────────────────────────
 
 /**
- * Xoá toàn bộ trigger cũ và tạo lại 3 trigger mới.
+ * Xoá toàn bộ trigger cũ và tạo lại 2 trigger mới.
  * Vào Apps Script → chọn hàm này → Run
  */
 function setupTriggers() {
@@ -52,24 +51,17 @@ function setupTriggers() {
 
   var ss = SpreadsheetApp.getActive();
 
-  // 1️⃣ Mỗi 10 phút — fetch toàn bộ
-  ScriptApp.newTrigger("fetchTikTokStats")
-    .timeBased()
-    .everyMinutes(10)
-    .create();
-
-  // 2️⃣ Khi ai đó mở file — fetch toàn bộ
+  // 1️⃣ Khi ai đó mở file — fetch toàn bộ
   // (Phải là installable trigger mới gọi được UrlFetchApp)
   ScriptApp.newTrigger("onOpenTrigger").forSpreadsheet(ss).onOpen().create();
 
-  // 3️⃣ Khi chỉnh sửa — chỉ fetch hàng vừa thay đổi nếu là cột K
+  // 2️⃣ Khi chỉnh sửa — chỉ fetch hàng vừa thay đổi nếu là cột K
   ScriptApp.newTrigger("onEditTrigger").forSpreadsheet(ss).onEdit().create();
 
   // Rebuild menu (onOpen simple trigger vẫn cần cho menu)
   try {
     SpreadsheetApp.getUi().alert(
-      "✅ Đã cài 3 trigger:\n" +
-        "• ⏰ Mỗi 10 phút\n" +
+      "✅ Đã cài 2 trigger:\n" +
         "• 📂 Khi mở file\n" +
         "• ✏️  Khi thay đổi cột K",
     );
@@ -105,7 +97,7 @@ function onEditTrigger(e) {
 
 // ─── HÀM CHÍNH ─────────────────────────────────────────────────────────────
 
-/** Hàm gọi thủ công hoặc từ trigger 10 phút */
+/** Hàm gọi thủ công hoặc từ menu */
 function fetchTikTokStats() {
   var sheet = getSheet();
   if (!sheet) return;
