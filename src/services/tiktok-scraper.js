@@ -8,16 +8,17 @@
  * request/second.
  */
 
-import axios from 'axios';
+import axios from "axios";
 
 const MAX_VIEWS_LIMIT = 35;
 const MISSING_USER_STATUS_CODES = new Set([10202, 10221, 10223]);
-const MISSING_USER_MESSAGE_RE = /user.*(?:not found|does not exist|doesn['’]t exist|banned)|account.*(?:not found|couldn['’]t be found)|couldn['’]t find (?:this |the )?account/i;
+const MISSING_USER_MESSAGE_RE =
+  /user.*(?:not found|does not exist|doesn['’]t exist|banned)|account.*(?:not found|couldn['’]t be found)|couldn['’]t find (?:this |the )?account/i;
 
 // Cấu hình chạy production được cố định trong mã nguồn, không đọc từ .env.
 const PRODUCTION_SCRAPER_CONFIG = Object.freeze({
-  providerUrl: 'https://www.tikwm.com',
-  tiktokWebUrl: 'https://www.tiktok.com',
+  providerUrl: "https://www.tikwm.com",
+  tiktokWebUrl: "https://www.tiktok.com",
   requestIntervalMs: 1_100,
   requestTimeoutMs: 5_000,
   retries: 3,
@@ -34,20 +35,27 @@ let {
 } = PRODUCTION_SCRAPER_CONFIG;
 
 const USER_AGENTS = [
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Safari/605.1.15',
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15',
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0',
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:131.0) Gecko/20100101 Firefox/131.0',
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:132.0) Gecko/20100101 Firefox/132.0',
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0',
-  'Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Mobile/15E148 Safari/605.1.15',
-  'Mozilla/5.0 (iPhone; CPU iPhone OS 17_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.7 Mobile/15E148 Safari/605.1.15',
-  'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36',
-  'Mozilla/5.0 (Linux; Android 14; SAMSUNG SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/26.0 Chrome/122.0.0.0 Mobile Safari/537.36',
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.7204.183 Safari/537.36",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.7258.154 Safari/537.36",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.7258.138 Safari/537.36",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.7204.168 Safari/537.36",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.7151.120 Safari/537.36",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.7151.104 Safari/537.36",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.7103.114 Safari/537.36",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.7103.93 Safari/537.36",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.7049.114 Safari/537.36",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.7049.95 Safari/537.36",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.6998.205 Safari/537.36",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.6998.178 Safari/537.36",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.6943.142 Safari/537.36",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.6943.126 Safari/537.36",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.6834.197 Safari/537.36",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.6834.181 Safari/537.36",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.6778.265 Safari/537.36",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.6778.205 Safari/537.36",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.6723.116 Safari/537.36",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.6723.91 Safari/537.36",
 ];
 
 function getRandomUserAgent() {
@@ -62,8 +70,8 @@ function createProviderHttpClient() {
     maxRedirects: 5,
     maxContentLength: 5 * 1024 * 1024,
     headers: {
-      Accept: 'application/json',
-      'Accept-Language': 'en-US,en;q=0.9',
+      Accept: "application/json",
+      "Accept-Language": "en-US,en;q=0.9",
     },
   });
 }
@@ -76,12 +84,18 @@ let lastProviderRequestAt = 0;
 /** Chỉ dùng trong test cục bộ; production luôn dùng cấu hình cố định ở trên. */
 export function configureTikTokScraperForTest(overrides = {}) {
   const config = { ...PRODUCTION_SCRAPER_CONFIG, ...overrides };
-  if (!Number.isInteger(config.viewsLimit) || config.viewsLimit < 1 || config.viewsLimit > MAX_VIEWS_LIMIT) {
-    throw new Error(`viewsLimit must be an integer from 1 to ${MAX_VIEWS_LIMIT}.`);
+  if (
+    !Number.isInteger(config.viewsLimit) ||
+    config.viewsLimit < 1 ||
+    config.viewsLimit > MAX_VIEWS_LIMIT
+  ) {
+    throw new Error(
+      `viewsLimit must be an integer from 1 to ${MAX_VIEWS_LIMIT}.`,
+    );
   }
 
-  PROVIDER_URL = String(config.providerUrl).replace(/\/$/, '');
-  TIKTOK_WEB_URL = String(config.tiktokWebUrl).replace(/\/$/, '');
+  PROVIDER_URL = String(config.providerUrl).replace(/\/$/, "");
+  TIKTOK_WEB_URL = String(config.tiktokWebUrl).replace(/\/$/, "");
   REQUEST_INTERVAL_MS = Number(config.requestIntervalMs);
   REQUEST_TIMEOUT_MS = Number(config.requestTimeoutMs);
   PROVIDER_RETRIES = Number(config.retries);
@@ -91,10 +105,10 @@ export function configureTikTokScraperForTest(overrides = {}) {
   lastProviderRequestAt = 0;
 }
 
-const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function throwIfAborted(signal) {
-  if (signal?.aborted) throw signal.reason || new Error('Request cancelled.');
+  if (signal?.aborted) throw signal.reason || new Error("Request cancelled.");
 }
 
 function waitWithSignal(ms, signal) {
@@ -105,15 +119,15 @@ function waitWithSignal(ms, signal) {
     const timer = setTimeout(onComplete, ms);
     const onAbort = () => {
       clearTimeout(timer);
-      signal.removeEventListener('abort', onAbort);
-      reject(signal.reason || new Error('Request cancelled.'));
+      signal.removeEventListener("abort", onAbort);
+      reject(signal.reason || new Error("Request cancelled."));
     };
     function onComplete() {
       clearTimeout(timer);
-      signal.removeEventListener('abort', onAbort);
+      signal.removeEventListener("abort", onAbort);
       resolve();
     }
-    signal.addEventListener('abort', onAbort, { once: true });
+    signal.addEventListener("abort", onAbort, { once: true });
     if (signal.aborted) onAbort();
   });
 }
@@ -129,16 +143,16 @@ function serviceError(message, code, status, details) {
 function accountNotFoundError(username) {
   return serviceError(
     `Không tìm thấy tài khoản @${username} hoặc tài khoản đã bị vô hiệu hóa.`,
-    'USER_NOT_FOUND',
+    "USER_NOT_FOUND",
     404,
     {
       accountHealth: {
-        status: 'NOT_FOUND',
-        label: 'KHÔNG TÌM THẤY',
+        status: "NOT_FOUND",
+        label: "KHÔNG TÌM THẤY",
         isAccessible: false,
         isPublic: false,
         canReadViews: false,
-        reason: 'TikTok không còn trả về hồ sơ công khai cho username này.',
+        reason: "TikTok không còn trả về hồ sơ công khai cho username này.",
         checkedAt: new Date().toISOString(),
       },
     },
@@ -146,16 +160,12 @@ function accountNotFoundError(username) {
 }
 
 function invalidUsernameError() {
-  return serviceError(
-    'Username is missing.',
-    'INVALID_USERNAME',
-    400,
-  );
+  return serviceError("Username is missing.", "INVALID_USERNAME", 400);
 }
 
 function normalizeUsername(username) {
-  if (typeof username !== 'string') throw invalidUsernameError();
-  const clean = username.trim().replace(/^@/, '').trim();
+  if (typeof username !== "string") throw invalidUsernameError();
+  const clean = username.trim().replace(/^@/, "").trim();
   if (!clean) throw invalidUsernameError();
   return clean;
 }
@@ -181,11 +191,15 @@ function scheduleProviderRequest(task, signal) {
 }
 
 function isInvalidUsernameMessage(message) {
-  return /unique[_ ]?id.*invalid|user.*(?:not found|does not exist)|account.*not found/i.test(message);
+  return /unique[_ ]?id.*invalid|user.*(?:not found|does not exist)|account.*not found/i.test(
+    message,
+  );
 }
 
 function isRetryableProviderMessage(message) {
-  return /limit|too many|busy|timeout|temporar|try again|system error|network/i.test(message);
+  return /limit|too many|busy|timeout|temporar|try again|system error|network/i.test(
+    message,
+  );
 }
 
 async function providerGet(path, params, { username, signal } = {}) {
@@ -193,56 +207,68 @@ async function providerGet(path, params, { username, signal } = {}) {
 
   for (let attempt = 1; attempt <= PROVIDER_RETRIES; attempt += 1) {
     try {
-      const response = await scheduleProviderRequest(() => http.get(path, {
-        params,
-        signal,
-        headers: {
-          'User-Agent': getRandomUserAgent(),
-        },
-      }));
+      const response = await scheduleProviderRequest(() =>
+        http.get(path, {
+          params,
+          signal,
+          headers: {
+            "User-Agent": getRandomUserAgent(),
+          },
+        }),
+      );
       const payload = response.data;
 
       if (Number(payload?.code) === 0 && payload?.data) {
         return payload.data;
       }
 
-      const providerMessage = String(payload?.msg || 'Provider trả về dữ liệu không hợp lệ.');
+      const providerMessage = String(
+        payload?.msg || "Provider trả về dữ liệu không hợp lệ.",
+      );
       if (username && isInvalidUsernameMessage(providerMessage)) {
         throw accountNotFoundError(username);
       }
 
       lastError = serviceError(
         `Nguồn dữ liệu TikTok từ chối yêu cầu: ${providerMessage}`,
-        'PROVIDER_ERROR',
+        "PROVIDER_ERROR",
         503,
       );
 
       if (!isRetryableProviderMessage(providerMessage)) break;
     } catch (error) {
       if (signal?.aborted) throw signal.reason || error;
-      if (error.code === 'USER_NOT_FOUND') throw error;
+      if (error.code === "USER_NOT_FOUND") throw error;
 
       const httpStatus = error.response?.status;
       lastError = serviceError(
         `Không kết nối được nguồn dữ liệu TikTok: ${error.message}`,
-        'PROVIDER_UNAVAILABLE',
+        "PROVIDER_UNAVAILABLE",
         503,
       );
 
-      if (httpStatus && httpStatus < 500 && httpStatus !== 408 && httpStatus !== 429) {
+      if (
+        httpStatus &&
+        httpStatus < 500 &&
+        httpStatus !== 408 &&
+        httpStatus !== 429
+      ) {
         break;
       }
     }
 
     if (attempt < PROVIDER_RETRIES) {
-      await waitWithSignal(Math.min(500 * (2 ** (attempt - 1)), 2_000), signal);
+      await waitWithSignal(Math.min(500 * 2 ** (attempt - 1), 2_000), signal);
     }
   }
 
-  throw lastError || serviceError(
-    'Nguồn dữ liệu TikTok tạm thời không khả dụng.',
-    'PROVIDER_UNAVAILABLE',
-    503,
+  throw (
+    lastError ||
+    serviceError(
+      "Nguồn dữ liệu TikTok tạm thời không khả dụng.",
+      "PROVIDER_UNAVAILABLE",
+      503,
+    )
   );
 }
 
@@ -251,19 +277,22 @@ function nonNegativeInt(value) {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
 }
 
-function createAccountHealth(profile, { viewsChecked = false, lastVideoAt = null } = {}) {
-  let status = 'ACTIVE';
-  let label = 'HOẠT ĐỘNG';
-  let reason = 'Hồ sơ công khai truy cập được.';
+function createAccountHealth(
+  profile,
+  { viewsChecked = false, lastVideoAt = null } = {},
+) {
+  let status = "ACTIVE";
+  let label = "HOẠT ĐỘNG";
+  let reason = "Hồ sơ công khai truy cập được.";
 
   if (profile.privateAccount) {
-    status = 'ACTIVE_PRIVATE';
-    label = 'HOẠT ĐỘNG (RIÊNG TƯ)';
-    reason = 'Tài khoản tồn tại nhưng đang ở chế độ riêng tư.';
+    status = "ACTIVE_PRIVATE";
+    label = "HOẠT ĐỘNG (RIÊNG TƯ)";
+    reason = "Tài khoản tồn tại nhưng đang ở chế độ riêng tư.";
   } else if (profile.videoCount === 0) {
-    status = 'ACTIVE_NO_VIDEOS';
-    label = 'HOẠT ĐỘNG (CHƯA CÓ VIDEO)';
-    reason = 'Tài khoản tồn tại và công khai nhưng chưa có video công khai.';
+    status = "ACTIVE_NO_VIDEOS";
+    label = "HOẠT ĐỘNG (CHƯA CÓ VIDEO)";
+    reason = "Tài khoản tồn tại và công khai nhưng chưa có video công khai.";
   }
 
   return {
@@ -282,7 +311,7 @@ function createAccountHealth(profile, { viewsChecked = false, lastVideoAt = null
   };
 }
 
-function buildProfile(user, stats, source = 'tikwm') {
+function buildProfile(user, stats, source = "tikwm") {
   if (!user?.uniqueId && !user?.id) return null;
 
   const profile = {
@@ -290,18 +319,21 @@ function buildProfile(user, stats, source = 'tikwm') {
     secUid: user.secUid || null,
     username: user.uniqueId || user.nickname,
     nickname: user.nickname || user.uniqueId,
-    bio: user.signature || '',
+    bio: user.signature || "",
     verified: Boolean(user.verified),
     privateAccount: Boolean(user.privateAccount ?? user.secret),
-    avatarUrl: user.avatarMedium || user.avatarLarger || user.avatarThumb || null,
+    avatarUrl:
+      user.avatarMedium || user.avatarLarger || user.avatarThumb || null,
     followers: nonNegativeInt(stats?.followerCount ?? stats?.fans),
     following: nonNegativeInt(stats?.followingCount),
-    likes: nonNegativeInt(stats?.heartCount ?? stats?.heart ?? stats?.diggCount),
+    likes: nonNegativeInt(
+      stats?.heartCount ?? stats?.heart ?? stats?.diggCount,
+    ),
     videoCount: nonNegativeInt(stats?.videoCount),
     totalViews: null,
     viewsVideoCount: 0,
     viewsLimit: VIEWS_LIMIT,
-    viewsScope: 'not_requested',
+    viewsScope: "not_requested",
     dataSource: source,
   };
 
@@ -310,8 +342,8 @@ function buildProfile(user, stats, source = 'tikwm') {
 }
 
 function isStatValue(value) {
-  if (typeof value === 'number') return Number.isFinite(value) && value >= 0;
-  return typeof value === 'string' && /^\d+$/.test(value);
+  if (typeof value === "number") return Number.isFinite(value) && value >= 0;
+  return typeof value === "string" && /^\d+$/.test(value);
 }
 
 function hasStatValue(stats, key) {
@@ -319,21 +351,24 @@ function hasStatValue(stats, key) {
 }
 
 function isCompleteStats(stats) {
-  if (!stats || typeof stats !== 'object' || Array.isArray(stats)) return false;
-  return ['followerCount', 'fans'].some(key => hasStatValue(stats, key))
-    && hasStatValue(stats, 'followingCount')
-    && hasStatValue(stats, 'videoCount')
-    && ['heartCount', 'heart', 'diggCount'].some(key => hasStatValue(stats, key));
+  if (!stats || typeof stats !== "object" || Array.isArray(stats)) return false;
+  return (
+    ["followerCount", "fans"].some((key) => hasStatValue(stats, key)) &&
+    hasStatValue(stats, "followingCount") &&
+    hasStatValue(stats, "videoCount") &&
+    ["heartCount", "heart", "diggCount"].some((key) => hasStatValue(stats, key))
+  );
 }
 
 function selectUserInfoStats(userInfo) {
   const rounded = userInfo?.stats;
   const exact = userInfo?.statsV2;
-  const stats = rounded && typeof rounded === 'object' && !Array.isArray(rounded)
-    ? { ...rounded }
-    : {};
+  const stats =
+    rounded && typeof rounded === "object" && !Array.isArray(rounded)
+      ? { ...rounded }
+      : {};
 
-  if (exact && typeof exact === 'object' && !Array.isArray(exact)) {
+  if (exact && typeof exact === "object" && !Array.isArray(exact)) {
     for (const [key, value] of Object.entries(exact)) {
       if (isStatValue(value)) stats[key] = value;
     }
@@ -343,8 +378,10 @@ function selectUserInfoStats(userInfo) {
 }
 
 function isCompleteUserInfo(userInfo) {
-  return Boolean(userInfo?.user?.uniqueId || userInfo?.user?.id)
-    && Boolean(selectUserInfoStats(userInfo));
+  return (
+    Boolean(userInfo?.user?.uniqueId || userInfo?.user?.id) &&
+    Boolean(selectUserInfoStats(userInfo))
+  );
 }
 
 function normalizeUserInfoStats(userInfo) {
@@ -353,7 +390,8 @@ function normalizeUserInfoStats(userInfo) {
 
   const stats = Object.fromEntries(
     Object.entries(exactStats).map(([key, value]) => {
-      if (typeof value !== 'string' || !/^\d+$/.test(value)) return [key, value];
+      if (typeof value !== "string" || !/^\d+$/.test(value))
+        return [key, value];
       const number = Number(value);
       return [key, Number.isSafeInteger(number) ? number : value];
     }),
@@ -362,10 +400,10 @@ function normalizeUserInfoStats(userInfo) {
 }
 
 function extractScriptJson(html, id) {
-  const escapedId = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const escapedId = id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const pattern = new RegExp(
     `<script\\b(?=[^>]*\\bid\\s*=\\s*["']${escapedId}["'])[^>]*>([\\s\\S]*?)<\\/script>`,
-    'i',
+    "i",
   );
   const match = html.match(pattern);
   if (!match) return null;
@@ -373,9 +411,9 @@ function extractScriptJson(html, id) {
 }
 
 function parseUniversalUserInfo(data) {
-  const detail = data?.__DEFAULT_SCOPE__?.['webapp.user-detail'];
+  const detail = data?.__DEFAULT_SCOPE__?.["webapp.user-detail"];
   if (detail?.userInfo?.user) {
-    return { userInfo: detail.userInfo, source: 'tiktok-universal-data' };
+    return { userInfo: detail.userInfo, source: "tiktok-universal-data" };
   }
 
   const statusCode = Number(detail?.statusCode);
@@ -383,7 +421,7 @@ function parseUniversalUserInfo(data) {
     return {
       error: {
         statusCode,
-        statusMessage: String(detail.statusMsg || ''),
+        statusMessage: String(detail.statusMsg || ""),
       },
     };
   }
@@ -398,7 +436,7 @@ function parseUniversalUserInfo(data) {
         user: module.users[username],
         stats: module.stats?.[username],
       },
-      source: 'tiktok-user-module',
+      source: "tiktok-user-module",
     };
   }
 
@@ -409,7 +447,7 @@ function parseNextUserInfo(data) {
   const pageProps = data?.props?.pageProps;
   const userInfo = pageProps?.userInfo;
   if (userInfo?.user) {
-    return { userInfo, source: 'tiktok-next-data' };
+    return { userInfo, source: "tiktok-next-data" };
   }
 
   const statusCode = Number(userInfo?.statusCode ?? pageProps?.statusCode);
@@ -417,7 +455,9 @@ function parseNextUserInfo(data) {
     return {
       error: {
         statusCode,
-        statusMessage: String(userInfo?.statusMsg ?? pageProps?.statusMsg ?? ''),
+        statusMessage: String(
+          userInfo?.statusMsg ?? pageProps?.statusMsg ?? "",
+        ),
       },
     };
   }
@@ -427,14 +467,16 @@ function parseNextUserInfo(data) {
 
 function isMissingUserPage(result) {
   if (!result?.error) return false;
-  return MISSING_USER_STATUS_CODES.has(result.error.statusCode)
-    || MISSING_USER_MESSAGE_RE.test(result.error.statusMessage);
+  return (
+    MISSING_USER_STATUS_CODES.has(result.error.statusCode) ||
+    MISSING_USER_MESSAGE_RE.test(result.error.statusMessage)
+  );
 }
 
 function parseUserProfileHtml(html, username) {
   const parsers = [
-    ['__UNIVERSAL_DATA_FOR_REHYDRATION__', parseUniversalUserInfo],
-    ['__NEXT_DATA__', parseNextUserInfo],
+    ["__UNIVERSAL_DATA_FOR_REHYDRATION__", parseUniversalUserInfo],
+    ["__NEXT_DATA__", parseNextUserInfo],
   ];
   let jsonError;
   let incompleteUserInfo = false;
@@ -460,8 +502,8 @@ function parseUserProfileHtml(html, username) {
 
   if (incompleteUserInfo) {
     throw serviceError(
-      'TikTok trả về hồ sơ thiếu user hoặc các trường thống kê bắt buộc.',
-      'INVALID_TIKTOK_DATA',
+      "TikTok trả về hồ sơ thiếu user hoặc các trường thống kê bắt buộc.",
+      "INVALID_TIKTOK_DATA",
       502,
     );
   }
@@ -469,32 +511,40 @@ function parseUserProfileHtml(html, username) {
   if (jsonError) {
     throw serviceError(
       `Không đọc được dữ liệu hồ sơ: ${jsonError.message}`,
-      'PARSE_ERROR',
+      "PARSE_ERROR",
       502,
     );
   }
 
   throw serviceError(
-    'TikTok không trả về dữ liệu hồ sơ nhận dạng được qua HTTP.',
-    'PARSE_ERROR',
+    "TikTok không trả về dữ liệu hồ sơ nhận dạng được qua HTTP.",
+    "PARSE_ERROR",
     503,
   );
 }
 
 async function fetchProfileFromProvider(username, signal) {
-  const data = await providerGet('/api/user/info', { unique_id: username }, { username, signal });
-  if (!data?.user || (!data.user.uniqueId && !data.user.id) || !isCompleteStats(data.stats)) {
+  const data = await providerGet(
+    "/api/user/info",
+    { unique_id: username },
+    { username, signal },
+  );
+  if (
+    !data?.user ||
+    (!data.user.uniqueId && !data.user.id) ||
+    !isCompleteStats(data.stats)
+  ) {
     throw serviceError(
-      'Nguồn dữ liệu trả về hồ sơ thiếu user hoặc các trường thống kê bắt buộc.',
-      'INVALID_PROVIDER_DATA',
+      "Nguồn dữ liệu trả về hồ sơ thiếu user hoặc các trường thống kê bắt buộc.",
+      "INVALID_PROVIDER_DATA",
       502,
     );
   }
   const profile = buildProfile(data.user, data.stats);
   if (!profile) {
     throw serviceError(
-      'Nguồn dữ liệu trả về hồ sơ không đầy đủ.',
-      'INVALID_PROVIDER_DATA',
+      "Nguồn dữ liệu trả về hồ sơ không đầy đủ.",
+      "INVALID_PROVIDER_DATA",
       502,
     );
   }
@@ -508,30 +558,34 @@ async function fetchProfileFromProvider(username, signal) {
 async function requestUserProfileInfo(username, signal) {
   let response;
   try {
-    response = await axios.get(`${TIKTOK_WEB_URL}/@${encodeURIComponent(username)}`, {
-      timeout: REQUEST_TIMEOUT_MS,
-      signal,
-      proxy: false,
-      maxRedirects: 5,
-      maxContentLength: 5 * 1024 * 1024,
-      headers: {
-        'User-Agent': getRandomUserAgent(),
-        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Cache-Control': 'no-cache',
+    response = await axios.get(
+      `${TIKTOK_WEB_URL}/@${encodeURIComponent(username)}`,
+      {
+        timeout: REQUEST_TIMEOUT_MS,
+        signal,
+        proxy: false,
+        maxRedirects: 5,
+        maxContentLength: 5 * 1024 * 1024,
+        headers: {
+          "User-Agent": getRandomUserAgent(),
+          Accept:
+            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "Accept-Language": "en-US,en;q=0.9",
+          "Cache-Control": "no-cache",
+        },
       },
-    });
+    );
   } catch (error) {
     if (signal?.aborted) throw signal.reason || error;
     if (error.response?.status === 404) throw accountNotFoundError(username);
     throw serviceError(
       `Không tải được hồ sơ TikTok: ${error.message}`,
-      'FETCH_ERROR',
+      "FETCH_ERROR",
       503,
     );
   }
 
-  const html = String(response.data || '');
+  const html = String(response.data || "");
   return parseUserProfileHtml(html, username);
 }
 
@@ -549,11 +603,15 @@ export async function getUserProfileInfo(username, { signal } = {}) {
 
 async function fetchProfileFromTikTokHtml(username, signal) {
   const { userInfo, source } = await requestUserProfileInfo(username, signal);
-  const profile = buildProfile(userInfo.user, selectUserInfoStats(userInfo), source);
+  const profile = buildProfile(
+    userInfo.user,
+    selectUserInfoStats(userInfo),
+    source,
+  );
   if (!profile) {
     throw serviceError(
-      'TikTok trả về hồ sơ không đầy đủ.',
-      'INVALID_TIKTOK_DATA',
+      "TikTok trả về hồ sơ không đầy đủ.",
+      "INVALID_TIKTOK_DATA",
       502,
     );
   }
@@ -561,17 +619,21 @@ async function fetchProfileFromTikTokHtml(username, signal) {
 }
 
 async function fetchRecentViews(username, limit = VIEWS_LIMIT, signal) {
-  const data = await providerGet('/api/user/posts', {
-    unique_id: username,
-    count: limit,
-    cursor: 0,
-  }, { username, signal });
+  const data = await providerGet(
+    "/api/user/posts",
+    {
+      unique_id: username,
+      count: limit,
+      cursor: 0,
+    },
+    { username, signal },
+  );
 
   const videos = Array.isArray(data.videos) ? data.videos.slice(0, limit) : [];
-  if (videos.some(video => !Number.isFinite(Number(video?.play_count)))) {
+  if (videos.some((video) => !Number.isFinite(Number(video?.play_count)))) {
     throw serviceError(
-      'Một số video không có trường play_count.',
-      'INVALID_VIEWS_DATA',
+      "Một số video không có trường play_count.",
+      "INVALID_VIEWS_DATA",
       502,
     );
   }
@@ -588,14 +650,19 @@ async function fetchRecentViews(username, limit = VIEWS_LIMIT, signal) {
   return {
     totalViews,
     videoCount: videos.length,
-    lastVideoAt: newestCreateTime ? new Date(newestCreateTime * 1_000).toISOString() : null,
+    lastVideoAt: newestCreateTime
+      ? new Date(newestCreateTime * 1_000).toISOString()
+      : null,
   };
 }
 
 /**
  * Fetch a TikTok profile and optionally sum views from recent public videos.
  */
-export async function fetchUserProfile(username, { includeViews = false, signal } = {}) {
+export async function fetchUserProfile(
+  username,
+  { includeViews = false, signal } = {},
+) {
   const clean = normalizeUsername(username);
   throwIfAborted(signal);
 
@@ -604,12 +671,17 @@ export async function fetchUserProfile(username, { includeViews = false, signal 
     profile = await fetchProfileFromTikTokHtml(clean, signal);
   } catch (tiktokError) {
     if (signal?.aborted) throw tiktokError;
-    console.warn(`[TikTok HTTP] TikTok profile lỗi (${tiktokError.message}); thử provider fallback.`);
+    console.warn(
+      `[TikTok HTTP] TikTok profile lỗi (${tiktokError.message}); thử provider fallback.`,
+    );
     try {
       profile = await fetchProfileFromProvider(clean, signal);
     } catch (providerError) {
       if (signal?.aborted) throw signal.reason || providerError;
-      if (tiktokError.code === 'USER_NOT_FOUND' && providerError.code === 'USER_NOT_FOUND') {
+      if (
+        tiktokError.code === "USER_NOT_FOUND" &&
+        providerError.code === "USER_NOT_FOUND"
+      ) {
         throw tiktokError;
       }
       throw providerError;
@@ -619,30 +691,34 @@ export async function fetchUserProfile(username, { includeViews = false, signal 
   if (!includeViews) return profile;
 
   if (profile.privateAccount) {
-    profile.viewsScope = 'unavailable_private_account';
-    profile.accountHealth = createAccountHealth(profile, { viewsChecked: false });
+    profile.viewsScope = "unavailable_private_account";
+    profile.accountHealth = createAccountHealth(profile, {
+      viewsChecked: false,
+    });
     return profile;
   }
 
   if (profile.videoCount === 0) {
     profile.totalViews = 0;
-    profile.viewsScope = 'recent_public_videos';
-    profile.accountHealth = createAccountHealth(profile, { viewsChecked: true });
+    profile.viewsScope = "recent_public_videos";
+    profile.accountHealth = createAccountHealth(profile, {
+      viewsChecked: true,
+    });
     return profile;
   }
 
   const views = await fetchRecentViews(clean, VIEWS_LIMIT, signal);
   if (views.videoCount === 0) {
     throw serviceError(
-      'Tài khoản có video nhưng nguồn dữ liệu không trả về danh sách video công khai.',
-      'VIEWS_UNAVAILABLE',
+      "Tài khoản có video nhưng nguồn dữ liệu không trả về danh sách video công khai.",
+      "VIEWS_UNAVAILABLE",
       503,
     );
   }
 
   profile.totalViews = views.totalViews;
   profile.viewsVideoCount = views.videoCount;
-  profile.viewsScope = 'recent_public_videos';
+  profile.viewsScope = "recent_public_videos";
   profile.accountHealth = createAccountHealth(profile, {
     viewsChecked: true,
     lastVideoAt: views.lastVideoAt,
@@ -651,12 +727,24 @@ export async function fetchUserProfile(username, { includeViews = false, signal 
 }
 
 export const scraperConfig = Object.freeze({
-  get providerUrl() { return PROVIDER_URL; },
-  get tiktokWebUrl() { return TIKTOK_WEB_URL; },
-  profileStrategy: 'tiktok-html-with-provider-fallback',
-  get requestIntervalMs() { return REQUEST_INTERVAL_MS; },
-  get requestTimeoutMs() { return REQUEST_TIMEOUT_MS; },
-  get retries() { return PROVIDER_RETRIES; },
-  get viewsLimit() { return VIEWS_LIMIT; },
+  get providerUrl() {
+    return PROVIDER_URL;
+  },
+  get tiktokWebUrl() {
+    return TIKTOK_WEB_URL;
+  },
+  profileStrategy: "tiktok-html-with-provider-fallback",
+  get requestIntervalMs() {
+    return REQUEST_INTERVAL_MS;
+  },
+  get requestTimeoutMs() {
+    return REQUEST_TIMEOUT_MS;
+  },
+  get retries() {
+    return PROVIDER_RETRIES;
+  },
+  get viewsLimit() {
+    return VIEWS_LIMIT;
+  },
   browserEnabled: false,
 });
