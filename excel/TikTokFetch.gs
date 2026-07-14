@@ -27,12 +27,12 @@ var OUTPUT_COLUMN_COUNT = 5; // C:G
 var COL = {
   USERNAME: 11, // K
   SKIP_STATUS: 9, // I (chỉ đọc để quyết định bỏ qua hàng)
-  STATUS: 18,     // R (đọc/ghi trạng thái kết quả)
+  STATUS: 18, // R (đọc/ghi trạng thái kết quả)
   FOLLOWERS: 3, // C
-  LIKES: 4,     // D
-  VIDEOS: 5,   // E
-  VIEWS: 6,    // F — Tổng view (30 video gần nhất)
-  AVATAR: 7,   // G
+  LIKES: 4, // D
+  VIDEOS: 5, // E
+  VIEWS: 6, // F — Tổng view (30 video gần nhất)
+  AVATAR: 7, // G
 };
 
 var SKIP_STATUSES = ["BỊ BAN", "Loại bảo mật", "Outr beta"];
@@ -158,9 +158,15 @@ function fetchSingleRow(sheet, row) {
   if (!rawUsername) return "skipped";
 
   // Cột I chỉ dùng để quyết định bỏ qua, không ghi vào cột I.
-  var skipStatus = sheet.getRange(row, COL.SKIP_STATUS).getValue().toString().trim();
+  var skipStatus = sheet
+    .getRange(row, COL.SKIP_STATUS)
+    .getValue()
+    .toString()
+    .trim();
   if (SKIP_STATUSES.indexOf(skipStatus) !== -1) {
-    Logger.log("⏭ Hàng " + row + ': bỏ qua vì trạng thái = "' + skipStatus + '"');
+    Logger.log(
+      "⏭ Hàng " + row + ': bỏ qua vì trạng thái = "' + skipStatus + '"',
+    );
     return "skipped";
   }
 
@@ -230,23 +236,44 @@ function fetchSingleRow(sheet, row) {
     if (result.videos && i < result.videos.length) {
       var v = result.videos[i];
       var createdTimeStr = "—";
-      if (v.created_at) {
+      if (v.create_time) {
         try {
-          var date = new Date(v.created_at);
-          createdTimeStr = Utilities.formatDate(date, Session.getScriptTimeZone(), "dd/MM/yyyy HH:mm:ss");
+          var date = new Date(Number(v.create_time) * 1000);
+          createdTimeStr = Utilities.formatDate(
+            date,
+            Session.getScriptTimeZone(),
+            "dd/MM/yyyy HH:mm:ss",
+          );
         } catch (e) {
-          createdTimeStr = v.created_at;
+          createdTimeStr = v.create_time;
         }
       }
-      var text = (v.link || "") + "\n" +
-                 "Created: " + createdTimeStr + "\n" +
-                 "Region: " + (v.region || "") + "\n" +
-                 "Play: " + (v.play_count || 0) + "\n" +
-                 "Digg: " + (v.digg_count || 0) + "\n" +
-                 "Comment: " + (v.comment_count || 0) + "\n" +
-                 "Share: " + (v.share_count || 0) + "\n" +
-                 "Download: " + (v.download_count || 0) + "\n" +
-                 "Collect: " + (v.collect_count || 0);
+      var text =
+        (v.link || "") +
+        "\n" +
+        "Created: " +
+        createdTimeStr +
+        "\n" +
+        "Region: " +
+        (v.region || "") +
+        "\n" +
+        "Play: " +
+        (v.play_count || 0) +
+        "\n" +
+        "Digg: " +
+        (v.digg_count || 0) +
+        "\n" +
+        "Comment: " +
+        (v.comment_count || 0) +
+        "\n" +
+        "Share: " +
+        (v.share_count || 0) +
+        "\n" +
+        "Download: " +
+        (v.download_count || 0) +
+        "\n" +
+        "Collect: " +
+        (v.collect_count || 0);
       videoValues.push(text);
     } else {
       videoValues.push("");
@@ -279,7 +306,10 @@ function fetchSingleRow(sheet, row) {
 function callApi(username) {
   // Dùng endpoint /profile?views=1 để lấy cả views trong 1 request
   var url =
-    API_BASE_URL + "/api/user/" + encodeURIComponent(username) + "/profile?views=1";
+    API_BASE_URL +
+    "/api/user/" +
+    encodeURIComponent(username) +
+    "/profile?views=1";
   try {
     var response = UrlFetchApp.fetch(url, {
       method: "get",
@@ -318,9 +348,10 @@ function callApi(username) {
       followers: Number(json.data.followers || 0),
       likes: Number(json.data.likes || 0),
       videoCount: Number(json.data.videoCount || 0),
-      totalViews: json.data.totalViews !== null && json.data.totalViews !== undefined
-        ? Number(json.data.totalViews)
-        : null,
+      totalViews:
+        json.data.totalViews !== null && json.data.totalViews !== undefined
+          ? Number(json.data.totalViews)
+          : null,
       avatarUrl: json.data.avatarUrl || "",
       videos: json.data.videos || [],
       accountHealthLabel:

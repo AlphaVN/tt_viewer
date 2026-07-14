@@ -650,6 +650,7 @@ async function fetchRecentViews(username, limit = VIEWS_LIMIT, signal) {
   const mappedVideos = videos.map(video => ({
     link: `https://www.tiktok.com/@${username}/video/${video.video_id}`,
     region: video.region || "",
+    create_time: nonNegativeInt(video.create_time),
     created_at: video.create_time
       ? new Date(nonNegativeInt(video.create_time) * 1_000).toISOString()
       : null,
