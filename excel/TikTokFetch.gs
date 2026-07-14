@@ -229,7 +229,17 @@ function fetchSingleRow(sheet, row) {
   for (var i = 0; i < maxVideos; i++) {
     if (result.videos && i < result.videos.length) {
       var v = result.videos[i];
+      var createdTimeStr = "—";
+      if (v.created_at) {
+        try {
+          var date = new Date(v.created_at);
+          createdTimeStr = Utilities.formatDate(date, Session.getScriptTimeZone(), "dd/MM/yyyy HH:mm:ss");
+        } catch (e) {
+          createdTimeStr = v.created_at;
+        }
+      }
       var text = (v.link || "") + "\n" +
+                 "Created: " + createdTimeStr + "\n" +
                  "Region: " + (v.region || "") + "\n" +
                  "Play: " + (v.play_count || 0) + "\n" +
                  "Digg: " + (v.digg_count || 0) + "\n" +
