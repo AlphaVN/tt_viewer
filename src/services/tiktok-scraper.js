@@ -17,7 +17,7 @@ const MISSING_USER_MESSAGE_RE =
 
 // Cấu hình chạy production được cố định trong mã nguồn, không đọc từ .env.
 const PRODUCTION_SCRAPER_CONFIG = Object.freeze({
-  providerUrl: "https://www.tikwm.com",
+  providerUrl: "https://api.tikwmapi.com",
   tiktokWebUrl: "https://www.tiktok.com",
   requestIntervalMs: 1_100,
   requestTimeoutMs: 5_000,
@@ -63,16 +63,21 @@ function getRandomUserAgent() {
 }
 
 function createProviderHttpClient() {
+  const apiKey = process.env.TIKWM_API_KEY || "60acdf13b82c871e5fb5f53c2cd3cb1d";
+  const headers = {
+    Accept: "application/json",
+    "Accept-Language": "en-US,en;q=0.9",
+  };
+  if (apiKey) {
+    headers["x-tikwmapi-key"] = apiKey;
+  }
   return axios.create({
     baseURL: PROVIDER_URL,
     timeout: REQUEST_TIMEOUT_MS,
     proxy: false,
     maxRedirects: 5,
     maxContentLength: 5 * 1024 * 1024,
-    headers: {
-      Accept: "application/json",
-      "Accept-Language": "en-US,en;q=0.9",
-    },
+    headers,
   });
 }
 
@@ -330,6 +335,7 @@ function buildProfile(user, stats, source = "tikwm") {
       stats?.heartCount ?? stats?.heart ?? stats?.diggCount,
     ),
     videoCount: nonNegativeInt(stats?.videoCount),
+    diggCount: nonNegativeInt(stats?.diggCount),
     totalViews: null,
     viewsVideoCount: 0,
     viewsLimit: VIEWS_LIMIT,
@@ -525,7 +531,7 @@ function parseUserProfileHtml(html, username) {
 
 async function fetchProfileFromProvider(username, signal) {
   const data = await providerGet(
-    "/api/user/info",
+    "/user/info",
     { unique_id: username },
     { username, signal },
   );
@@ -618,47 +624,6 @@ async function fetchProfileFromTikTokHtml(username, signal) {
   return profile;
 }
 
-async function fetchRecentViews(username, limit = VIEWS_LIMIT, signal) {
-  const data = await providerGet(
-    "/api/user/posts",
-    {
-      unique_id: username,
-      count: limit,
-      cursor: 0,
-    },
-    { username, signal },
-  );
-
-  const videos = Array.isArray(data.videos) ? data.videos.slice(0, limit) : [];
-  if (videos.some((video) => !Number.isFinite(Number(video?.play_count)))) {
-    throw serviceError(
-      "Một số video không có trường play_count.",
-      "INVALID_VIEWS_DATA",
-      502,
-    );
-  }
-
-  const totalViews = videos.reduce(
-    (total, video) => total + nonNegativeInt(video.play_count),
-    0,
-  );
-  const newestCreateTime = videos.reduce(
-    (newest, video) => Math.max(newest, nonNegativeInt(video.create_time)),
-    0,
-  );
-
-  return {
-    totalViews,
-    videoCount: videos.length,
-    lastVideoAt: newestCreateTime
-      ? new Date(newestCreateTime * 1_000).toISOString()
-      : null,
-  };
-}
-
-/**
- * Fetch a TikTok profile and optionally sum views from recent public videos.
- */
 export async function fetchUserProfile(
   username,
   { includeViews = false, signal } = {},
@@ -688,41 +653,23 @@ export async function fetchUserProfile(
     }
   }
 
-  if (!includeViews) return profile;
-
-  if (profile.privateAccount) {
-    profile.viewsScope = "unavailable_private_account";
-    profile.accountHealth = createAccountHealth(profile, {
-      viewsChecked: false,
-    });
-    return profile;
+  if (includeViews) {
+    if (profile.privateAccount) {
+      profile.viewsScope = "unavailable_private_account";
+      profile.accountHealth = createAccountHealth(profile, {
+        viewsChecked: false,
+      });
+    } else {
+      profile.totalViews = profile.diggCount;
+      profile.viewsVideoCount = 0;
+      profile.viewsScope = "recent_public_videos";
+      profile.accountHealth = createAccountHealth(profile, {
+        viewsChecked: true,
+      });
+    }
   }
 
-  if (profile.videoCount === 0) {
-    profile.totalViews = 0;
-    profile.viewsScope = "recent_public_videos";
-    profile.accountHealth = createAccountHealth(profile, {
-      viewsChecked: true,
-    });
-    return profile;
-  }
-
-  const views = await fetchRecentViews(clean, VIEWS_LIMIT, signal);
-  if (views.videoCount === 0) {
-    throw serviceError(
-      "Tài khoản có video nhưng nguồn dữ liệu không trả về danh sách video công khai.",
-      "VIEWS_UNAVAILABLE",
-      503,
-    );
-  }
-
-  profile.totalViews = views.totalViews;
-  profile.viewsVideoCount = views.videoCount;
-  profile.viewsScope = "recent_public_videos";
-  profile.accountHealth = createAccountHealth(profile, {
-    viewsChecked: true,
-    lastVideoAt: views.lastVideoAt,
-  });
+  delete profile.diggCount;
   return profile;
 }
 

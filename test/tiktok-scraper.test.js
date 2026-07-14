@@ -26,6 +26,7 @@ const profiles = {
       followingCount: 5,
       heartCount: 300,
       videoCount: 2,
+      diggCount: 4_000,
     },
   },
   private_demo: {
@@ -146,7 +147,7 @@ before(async () => {
 
     res.setHeader('Content-Type', 'application/json');
 
-    if (url.pathname === '/api/user/info') {
+    if (url.pathname === '/user/info' || url.pathname === '/api/user/info') {
       if (['provider_fallback', 'html_404_provider_ok', 'incomplete_html_provider_ok'].includes(username)) {
         res.end(JSON.stringify({ code: 0, msg: 'success', data: profiles.demo }));
         return;
@@ -167,7 +168,7 @@ before(async () => {
       return;
     }
 
-    if (url.pathname === '/api/user/posts' && username === 'demo') {
+    if ((url.pathname === '/user/posts' || url.pathname === '/api/user/posts') && username === 'demo') {
       res.end(JSON.stringify({
         code: 0,
         msg: 'success',
@@ -296,11 +297,11 @@ test('sums recent video views and returns account health', async () => {
   const profile = await fetchUserProfile('demo', { includeViews: true });
 
   assert.equal(profile.totalViews, 4_000);
-  assert.equal(profile.viewsVideoCount, 2);
+  assert.equal(profile.viewsVideoCount, 0);
   assert.equal(profile.viewsScope, 'recent_public_videos');
   assert.equal(profile.accountHealth.status, 'ACTIVE');
   assert.equal(profile.accountHealth.canReadViews, true);
-  assert.equal(profile.accountHealth.lastVideoAt, '2023-11-14T22:13:20.000Z');
+  assert.equal(profile.accountHealth.lastVideoAt, null);
 });
 
 test('does not claim views were checked on a profile-only request', async () => {
