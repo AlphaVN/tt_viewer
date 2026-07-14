@@ -226,25 +226,23 @@ function fetchSingleRow(sheet, row) {
   // Ghi chi tiết 30 video bắt đầu từ cột T (cột 20)
   var videoValues = [];
   var maxVideos = 30;
-  var fieldsPerVideo = 8;
   for (var i = 0; i < maxVideos; i++) {
     if (result.videos && i < result.videos.length) {
       var v = result.videos[i];
-      videoValues.push(v.link || "");
-      videoValues.push(v.region || "");
-      videoValues.push(v.play_count !== undefined && v.play_count !== null ? Number(v.play_count) : 0);
-      videoValues.push(v.digg_count !== undefined && v.digg_count !== null ? Number(v.digg_count) : 0);
-      videoValues.push(v.comment_count !== undefined && v.comment_count !== null ? Number(v.comment_count) : 0);
-      videoValues.push(v.share_count !== undefined && v.share_count !== null ? Number(v.share_count) : 0);
-      videoValues.push(v.download_count !== undefined && v.download_count !== null ? Number(v.download_count) : 0);
-      videoValues.push(v.collect_count !== undefined && v.collect_count !== null ? Number(v.collect_count) : 0);
+      var text = (v.link || "") + "\n" +
+                 "Region: " + (v.region || "") + "\n" +
+                 "Play: " + (v.play_count || 0) + "\n" +
+                 "Digg: " + (v.digg_count || 0) + "\n" +
+                 "Comment: " + (v.comment_count || 0) + "\n" +
+                 "Share: " + (v.share_count || 0) + "\n" +
+                 "Download: " + (v.download_count || 0) + "\n" +
+                 "Collect: " + (v.collect_count || 0);
+      videoValues.push(text);
     } else {
-      for (var f = 0; f < fieldsPerVideo; f++) {
-        videoValues.push("");
-      }
+      videoValues.push("");
     }
   }
-  sheet.getRange(row, 20, 1, maxVideos * fieldsPerVideo).setValues([videoValues]);
+  sheet.getRange(row, 20, 1, maxVideos).setValues([videoValues]);
 
   getStatusRange(sheet, row)
     .setValue(result.accountHealthLabel || "KHÔNG XÁC ĐỊNH")
@@ -396,8 +394,8 @@ function onOpen() {
 }
 function clearVideoColumns(sheet, row) {
   var emptyValues = [];
-  for (var i = 0; i < 240; i++) {
+  for (var i = 0; i < 30; i++) {
     emptyValues.push("");
   }
-  sheet.getRange(row, 20, 1, 240).setValues([emptyValues]);
+  sheet.getRange(row, 20, 1, 30).setValues([emptyValues]);
 }
