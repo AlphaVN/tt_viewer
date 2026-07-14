@@ -242,44 +242,53 @@ function fetchSingleRow(sheet, row) {
           createdTimeStr = Utilities.formatDate(
             date,
             Session.getScriptTimeZone(),
-            "dd/MM/yyyy HH:mm:ss",
+            "HH:mm dd/MM/yyyy",
           );
         } catch (e) {
           createdTimeStr = v.create_time;
         }
       }
+      var linkText = "Xem video";
       var text =
-        (v.link || "") +
-        "\n" +
-        "Created: " +
         createdTimeStr +
         "\n" +
-        "Region: " +
+        "🌍 " +
         (v.region || "") +
         "\n" +
-        "Play: " +
+        "▶️ " +
         (v.play_count || 0) +
         "\n" +
-        "Digg: " +
+        "❤️ " +
         (v.digg_count || 0) +
         "\n" +
-        "Comment: " +
+        "💬 " +
         (v.comment_count || 0) +
         "\n" +
-        "Share: " +
+        "🔁 " +
         (v.share_count || 0) +
         "\n" +
-        "Download: " +
+        "📥 " +
         (v.download_count || 0) +
         "\n" +
-        "Collect: " +
-        (v.collect_count || 0);
-      videoValues.push(text);
+        "💾 " +
+        (v.collect_count || 0) +
+        "\n" +
+        linkText;
+
+      var richValue = SpreadsheetApp.newRichTextValue()
+        .setText(text)
+        .setLinkUrl(
+          text.indexOf(linkText),
+          text.indexOf(linkText) + linkText.length,
+          v.link || "",
+        )
+        .build();
+      videoValues.push(richValue);
     } else {
-      videoValues.push("");
+      videoValues.push(SpreadsheetApp.newRichTextValue().setText("").build());
     }
   }
-  sheet.getRange(row, 20, 1, maxVideos).setValues([videoValues]);
+  sheet.getRange(row, 20, 1, maxVideos).setRichTextValues([videoValues]);
 
   getStatusRange(sheet, row)
     .setValue(result.accountHealthLabel || "KHÔNG XÁC ĐỊNH")
@@ -436,7 +445,7 @@ function onOpen() {
 function clearVideoColumns(sheet, row) {
   var emptyValues = [];
   for (var i = 0; i < 30; i++) {
-    emptyValues.push("");
+    emptyValues.push(SpreadsheetApp.newRichTextValue().setText("").build());
   }
-  sheet.getRange(row, 20, 1, 30).setValues([emptyValues]);
+  sheet.getRange(row, 20, 1, 30).setRichTextValues([emptyValues]);
 }
