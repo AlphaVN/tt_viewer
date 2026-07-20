@@ -114,10 +114,21 @@ function fetchAllRows(sheet, showAlert) {
     failed = 0;
 
   for (var row = DATA_START_ROW; row <= lastRow; row++) {
-    var processed = fetchSingleRow(sheet, row);
-    if (processed === "success") success++;
-    else if (processed === "error") failed++;
-    else skipped++;
+    try {
+      var processed = fetchSingleRow(sheet, row);
+      if (processed === "success") success++;
+      else if (processed === "error") failed++;
+      else skipped++;
+    } catch (rowErr) {
+      // Lỗi không mong đợi: log lại, giữ nguyên dữ liệu cũ, tiếp tục dòng tiếp theo
+      Logger.log("❌ Hàng " + row + " bị lỗi ngoài dự kiến: " + rowErr.message);
+      try {
+        getStatusRange(sheet, row).setNote("Lỗi script: " + rowErr.message);
+      } catch (e) {
+        /* kệ nếu ghi note cũng lỗi */
+      }
+      failed++;
+    }
   }
 
   Logger.log(
@@ -173,7 +184,7 @@ function fetchSingleRow(sheet, row) {
   var username = rawUsername.replace(/^@/, "");
   Logger.log("▶ Hàng " + row + ": @" + username);
 
-  // Giữ dữ liệu cũ để không làm mất số liệu khi API tạm thời lỗi.
+  // Giữ dữ liệu cũ để khôi phục nếu có lỗi.
   var outputRange = getOutputRange(sheet, row);
   var previous = {
     values: outputRange.getValues()[0],
@@ -181,133 +192,148 @@ function fetchSingleRow(sheet, row) {
     status: getStatusRange(sheet, row).getValue(),
   };
 
-  // Loading — chỉ ghi C:G.
-  writeOutputRow(sheet, row, ["⏳", "⏳", "⏳", "⏳", "⏳"]);
-  SpreadsheetApp.flush();
-
-  // Gọi API
-  var result = callApi(username);
-
-  if (result.error) {
-    if (result.code === "USER_NOT_FOUND") {
-      // Chỉ ghi 0 khi đã xác nhận tài khoản không tồn tại/không truy cập được.
-      writeOutputRow(sheet, row, [0, 0, 0, 0, "—"]);
-      clearVideoColumns(sheet, row);
-      getStatusRange(sheet, row).setValue(
-        result.accountHealthLabel || "KHÔNG TÌM THẤY",
-      );
-    } else {
-      // Lỗi mạng/provider: khôi phục dữ liệu gần nhất thay vì biến thành 0 giả.
-      writeOutputRow(sheet, row, previous.values, previous.formulas);
-      getStatusRange(sheet, row).setValue(previous.status);
-    }
-    getStatusRange(sheet, row).setNote(
-      "Lần kiểm tra gần nhất lỗi: " + result.error,
-    );
-    Logger.log("  ❌ " + result.error);
+  try {
+    // Loading — chỉ ghi C:G.
+    writeOutputRow(sheet, row, ["⏳", "⏳", "⏳", "⏳", "⏳"]);
     SpreadsheetApp.flush();
+
+    // Gọi API
+    var result = callApi(username);
+
+    if (result.error) {
+      if (result.code === "USER_NOT_FOUND") {
+        // Chỉ ghi 0 khi đã xác nhận tài khoản không tồn tại/không truy cập được.
+        writeOutputRow(sheet, row, [0, 0, 0, 0, "—"]);
+        clearVideoColumns(sheet, row);
+        getStatusRange(sheet, row).setValue(
+          result.accountHealthLabel || "KHÔNG TÌM THẤY",
+        );
+      } else {
+        // Lỗi mạng/provider: khôi phục dữ liệu gần nhất thay vì biến thành 0 giả.
+        writeOutputRow(sheet, row, previous.values, previous.formulas);
+        getStatusRange(sheet, row).setValue(previous.status);
+      }
+      getStatusRange(sheet, row).setNote(
+        "Lần kiểm tra gần nhất lỗi: " + result.error,
+      );
+      Logger.log("  ❌ " + result.error);
+      SpreadsheetApp.flush();
+      return "error";
+    }
+
+    var avatarValue = "—";
+    var avatarFormula = "";
+    if (result.avatarUrl) {
+      var safeUrl = result.avatarUrl.replace(/"/g, "'");
+      avatarFormula = '=IMAGE("' + safeUrl + '";4;48;48)';
+    }
+
+    writeOutputRow(
+      sheet,
+      row,
+      [
+        result.followers,
+        result.likes,
+        result.videoCount,
+        result.totalViews !== null ? result.totalViews : "RIÊNG TƯ",
+        avatarValue,
+      ],
+      ["", "", "", "", avatarFormula],
+    );
+
+    // Ghi chi tiết 30 video bắt đầu từ cột T (cột 20)
+    var videoValues = [];
+    var maxVideos = 30;
+    for (var i = 0; i < maxVideos; i++) {
+      if (result.videos && i < result.videos.length) {
+        var v = result.videos[i];
+        var createdTimeStr = "—";
+        if (v.create_time) {
+          try {
+            var date = new Date(Number(v.create_time) * 1000);
+            createdTimeStr = Utilities.formatDate(
+              date,
+              Session.getScriptTimeZone(),
+              "HH:mm dd/MM/yyyy",
+            );
+          } catch (e) {
+            createdTimeStr = v.create_time;
+          }
+        }
+        var linkText = "Xem video";
+        var text =
+          createdTimeStr +
+          "\n" +
+          "🌍 " +
+          (v.region || "") +
+          "\n" +
+          "▶️ " +
+          (v.play_count || 0) +
+          "\n" +
+          "❤️ " +
+          (v.digg_count || 0) +
+          "\n" +
+          "💬 " +
+          (v.comment_count || 0) +
+          "\n" +
+          "🔁 " +
+          (v.share_count || 0) +
+          "\n" +
+          "📥 " +
+          (v.download_count || 0) +
+          "\n" +
+          "💾 " +
+          (v.collect_count || 0) +
+          "\n" +
+          linkText;
+
+        var richValue = SpreadsheetApp.newRichTextValue()
+          .setText(text)
+          .setLinkUrl(
+            text.indexOf(linkText),
+            text.indexOf(linkText) + linkText.length,
+            v.link || "",
+          )
+          .build();
+        videoValues.push(richValue);
+      } else {
+        videoValues.push(SpreadsheetApp.newRichTextValue().setText("").build());
+      }
+    }
+    sheet.getRange(row, 20, 1, maxVideos).setRichTextValues([videoValues]);
+
+    getStatusRange(sheet, row)
+      .setValue(result.accountHealthLabel || "KHÔNG XÁC ĐỊNH")
+      .clearNote();
+
+    Logger.log(
+      "  ✅ " +
+        result.followers +
+        " followers | " +
+        result.likes +
+        " likes | " +
+        result.videoCount +
+        " videos | " +
+        result.totalViews +
+        " views",
+    );
+    // Không flush lần nữa ở đây: công thức IMAGE() tại G tải bất đồng bộ và
+    // không được phép giữ luồng cập nhật C:F chờ avatar.
+    return "success";
+  } catch (err) {
+    // Lỗi bất ngờ (parse JSON, timeout, v.v.): khôi phục giá trị cũ, ghi note, tiếp tục.
+    Logger.log("  ⚠️ Hàng " + row + " exception: " + err.message);
+    try {
+      writeOutputRow(sheet, row, previous.values, previous.formulas);
+      getStatusRange(sheet, row)
+        .setValue(previous.status)
+        .setNote("Lỗi script: " + err.message);
+      SpreadsheetApp.flush();
+    } catch (e) {
+      /* kệ nếu ghi lại cũng lỗi */
+    }
     return "error";
   }
-
-  var avatarValue = "—";
-  var avatarFormula = "";
-  if (result.avatarUrl) {
-    var safeUrl = result.avatarUrl.replace(/"/g, "'");
-    avatarFormula = '=IMAGE("' + safeUrl + '";4;48;48)';
-  }
-
-  writeOutputRow(
-    sheet,
-    row,
-    [
-      result.followers,
-      result.likes,
-      result.videoCount,
-      result.totalViews !== null ? result.totalViews : "RIÊNG TƯ",
-      avatarValue,
-    ],
-    ["", "", "", "", avatarFormula],
-  );
-
-  // Ghi chi tiết 30 video bắt đầu từ cột T (cột 20)
-  var videoValues = [];
-  var maxVideos = 30;
-  for (var i = 0; i < maxVideos; i++) {
-    if (result.videos && i < result.videos.length) {
-      var v = result.videos[i];
-      var createdTimeStr = "—";
-      if (v.create_time) {
-        try {
-          var date = new Date(Number(v.create_time) * 1000);
-          createdTimeStr = Utilities.formatDate(
-            date,
-            Session.getScriptTimeZone(),
-            "HH:mm dd/MM/yyyy",
-          );
-        } catch (e) {
-          createdTimeStr = v.create_time;
-        }
-      }
-      var linkText = "Xem video";
-      var text =
-        createdTimeStr +
-        "\n" +
-        "🌍 " +
-        (v.region || "") +
-        "\n" +
-        "▶️ " +
-        (v.play_count || 0) +
-        "\n" +
-        "❤️ " +
-        (v.digg_count || 0) +
-        "\n" +
-        "💬 " +
-        (v.comment_count || 0) +
-        "\n" +
-        "🔁 " +
-        (v.share_count || 0) +
-        "\n" +
-        "📥 " +
-        (v.download_count || 0) +
-        "\n" +
-        "💾 " +
-        (v.collect_count || 0) +
-        "\n" +
-        linkText;
-
-      var richValue = SpreadsheetApp.newRichTextValue()
-        .setText(text)
-        .setLinkUrl(
-          text.indexOf(linkText),
-          text.indexOf(linkText) + linkText.length,
-          v.link || "",
-        )
-        .build();
-      videoValues.push(richValue);
-    } else {
-      videoValues.push(SpreadsheetApp.newRichTextValue().setText("").build());
-    }
-  }
-  sheet.getRange(row, 20, 1, maxVideos).setRichTextValues([videoValues]);
-
-  getStatusRange(sheet, row)
-    .setValue(result.accountHealthLabel || "KHÔNG XÁC ĐỊNH")
-    .clearNote();
-
-  Logger.log(
-    "  ✅ " +
-      result.followers +
-      " followers | " +
-      result.likes +
-      " likes | " +
-      result.videoCount +
-      " videos | " +
-      result.totalViews +
-      " views",
-  );
-  // Không flush lần nữa ở đây: công thức IMAGE() tại G tải bất đồng bộ và
-  // không được phép giữ luồng cập nhật C:F chờ avatar.
-  return "success";
 }
 
 // ─── API ───────────────────────────────────────────────────────────────────
