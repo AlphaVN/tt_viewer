@@ -13,6 +13,7 @@ import * as cache from './services/cache.js';
 import { scraperConfig } from './services/tiktok-scraper.js';
 import { logUnhandledError } from './services/request-log.js';
 import userRoutes from './routes/user.routes.js';
+import telegramRoutes from './routes/telegram.routes.js';
 
 const app = express();
 // Ứng dụng chỉ triển khai sau một Render proxy.
@@ -32,12 +33,15 @@ function clientIpForRateLimit(req) {
 // ─── Security Middleware ───────────────────────────────────────────────────
 app.use(helmet());
 app.use(cors());
-app.use(express.json());
 app.use((req, _res, next) => {
   req.requestId = randomUUID();
   req.requestStartedAt = Date.now();
   next();
 });
+// Mount trước JSON parser toàn cục: secret header được kiểm tra trước khi parse
+// body, và webhook có limit riêng 32 KB.
+app.use('/telegram', telegramRoutes);
+app.use(express.json());
 
 // ─── Rate Limiting ─────────────────────────────────────────────────────────
 const limiter = rateLimit({
@@ -130,6 +134,7 @@ app.get('/health', (req, res) => {
       viewsLimit: scraperConfig.viewsLimit,
       trustProxyHops: TRUST_PROXY_HOPS,
     },
+    telegram: telegramRoutes.runtimeStatus,
     timestamp: new Date().toISOString(),
   });
 });

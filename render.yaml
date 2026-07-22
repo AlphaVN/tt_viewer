@@ -8,6 +8,22 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
-      - key: PORT
-        value: 3000
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_WEBHOOK_SECRET
+        sync: false
+      - key: TELEGRAM_ALLOWED_USER_IDS
+        sync: false
+      - key: TELEGRAM_ALLOWED_CHAT_IDS
+        sync: false
+      - key: TELEGRAM_PRIVATE_ONLY
+        value: true
+      - key: TELEGRAM_TIME_ZONE
+        value: Asia/Ho_Chi_Minh
+      - key: APPS_SCRIPT_WEB_APP_URL
+        sync: false
+      - key: TELEGRAM_APPS_SCRIPT_SECRET
+        sync: false
+      - key: APPS_SCRIPT_TIMEOUT_MS
+        value: 330000
     healthCheckPath: /health

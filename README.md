@@ -1,7 +1,16 @@
-# TikTok User API
+# TikTok User API + Telegram Machine Bot
 
 API Node.js nhẹ để lấy thống kê profile TikTok, tổng view của các video công
 khai gần nhất và trạng thái truy cập của tài khoản.
+
+Repository cũng có Telegram bot: gửi `M001` (hoặc máy thêm sau này) để cập nhật
+các account có cùng mã ở cột J của Google Sheet rồi nhận kết quả. Xem toàn bộ
+các bước bảo mật, cài BotFather, Apps Script, Render và webhook tại
+**[TELEGRAM_SETUP.md](TELEGRAM_SETUP.md)**.
+
+> Cảnh báo: sheet từng được chia sẻ public trong khi có cột mật khẩu/email. Hãy
+> chuyển sheet về Restricted và đổi toàn bộ credential từng bị lộ trước khi
+> triển khai bot.
 
 API **không dùng Chromium/Playwright**. Thông tin profile được đọc trực tiếp từ
 JSON nhúng trong trang TikTok; API JSON nhẹ được dùng làm fallback và để lấy
@@ -14,7 +23,7 @@ Yêu cầu Node.js 18 trở lên.
 
 ```bash
 npm ci
-cp .env.example .env
+cp -n .env.example .env
 npm start
 ```
 
@@ -95,7 +104,7 @@ Với tài khoản không tồn tại, lỗi `404 USER_NOT_FOUND` vẫn kèm
 ## Google Sheet
 
 File [excel/TikTokFetch.gs](excel/TikTokFetch.gs) ghi dữ liệu vào sheet
-`Account`, với bố cục:
+`Accounts`, với bố cục:
 
 - C: followers
 - D: likes
@@ -103,15 +112,55 @@ File [excel/TikTokFetch.gs](excel/TikTokFetch.gs) ghi dữ liệu vào sheet
 - F: recent views
 - G: avatar
 - I: trạng thái dùng để bỏ qua hàng (chỉ đọc)
+- J: mã Máy (chỉ đọc)
 - K: username (chỉ đọc)
-- R: trạng thái kết quả và note lỗi
+- R: Chủ đề (không ghi)
+- T:AW: chi tiết 30 video
+- AX: trạng thái API và note lỗi
 
-Đặt `API_BASE_URL` trong file rồi chạy `setupTriggers()` một lần. Script sẽ:
+Đặt `API_BASE_URL`, chạy `verifyTelegramBridgeSetup()` rồi deploy Web App theo
+[TELEGRAM_SETUP.md](TELEGRAM_SETUP.md). Script sẽ:
 
-- chỉ thay đổi nội dung ô C:G và trạng thái/note ở R;
-- không ghi vào cột I, K hoặc ô ngoài C:G và R;
+- kiểm tra đúng header trước khi ghi và dừng nếu layout đã đổi;
+- chỉ thay đổi C:G, T:AW và trạng thái/note ở AX;
+- không ghi vào cột I, J, K, R hoặc các cột credential L:N;
 - khôi phục nội dung C:G cũ khi gặp lỗi mạng/provider;
 - chỉ ghi `0` vào C:F và `—` vào G khi API xác nhận `USER_NOT_FOUND`.
+
+`setupTriggers()` chỉ cần nếu vẫn muốn chế độ cũ onOpen/onEdit; Telegram Web App
+hoạt động không cần hai trigger này.
+
+## Telegram bot
+
+Luồng production:
+
+```text
+Telegram -> POST /telegram/webhook -> Apps Script doPost() -> sheet Accounts
+```
+
+Bot có các lớp bảo vệ sau:
+
+- Telegram webhook secret header;
+- allowlist Telegram `user_id`, private chat mặc định;
+- HMAC-SHA256 + timestamp + nonce giữa Node.js và Apps Script;
+- ScriptLock chống ghi đồng thời;
+- lọc theo từng dòng ở cột I; `BỊ BAN` và `Outr beta` không được cập nhật hoặc
+  trả về;
+- response chỉ allowlist username và thống kê, không chứa password/email;
+- chia message dài và xử lý Telegram rate limit.
+
+Các file Apps Script cần cài cùng project:
+
+- [excel/TikTokFetch.gs](excel/TikTokFetch.gs)
+- [excel/TelegramBridge.gs](excel/TelegramBridge.gs)
+
+Sau khi cấu hình `.env`, đăng ký webhook bằng:
+
+```bash
+npm run telegram:set-webhook
+```
+
+Chi tiết đầy đủ: [TELEGRAM_SETUP.md](TELEGRAM_SETUP.md).
 
 ## Cấu hình cố định trong mã nguồn
 

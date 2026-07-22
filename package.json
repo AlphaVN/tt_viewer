@@ -1,23 +1,31 @@
 {
   "name": "tiktok-user-api",
   "version": "1.1.0",
-  "description": "REST API HTTP nhẹ để lấy thống kê, recent views và trạng thái tài khoản TikTok",
+  "description": "REST API TikTok và Telegram bot cập nhật Google Sheet theo mã máy",
   "main": "src/index.js",
   "type": "module",
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
     "tunnel": "node start-with-tunnel.js",
+    "telegram:get-ids": "node scripts/get-telegram-ids.js",
+    "telegram:set-webhook": "node scripts/set-telegram-webhook.js",
+    "telegram:delete-webhook": "node scripts/delete-telegram-webhook.js",
     "test": "node --test test/*.test.js"
   },
   "keywords": [
     "tiktok",
     "api",
     "scraper",
-    "express"
+    "express",
+    "telegram",
+    "google-sheets"
   ],
   "author": "",
   "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
   "dependencies": {
     "axios": "^1.7.0",
     "cors": "^2.8.5",
