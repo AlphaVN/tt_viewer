@@ -141,7 +141,11 @@ Telegram -> POST /telegram/webhook -> Apps Script doPost() -> sheet Accounts
 Bot có các lớp bảo vệ sau:
 
 - Telegram webhook secret header;
-- allowlist Telegram `user_id`, private chat mặc định;
+- public cho mọi Telegram user trong private chat bằng flag tường minh; có thể
+  chuyển lại allowlist bằng một biến môi trường;
+- chỉ nhận mã máy thuần dạng `M` + 3–6 chữ số; command và input sai trả lỗi
+  chung trước khi gọi Apps Script/TikTok API;
+- một job mỗi user, tối đa 20 job và xử lý tuần tự để hạn chế spam/quota;
 - HMAC-SHA256 + timestamp + nonce giữa Node.js và Apps Script;
 - ScriptLock chống ghi đồng thời;
 - lọc theo từng dòng ở cột I; `BỊ BAN` và `Outr beta` không được cập nhật hoặc

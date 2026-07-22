@@ -121,16 +121,6 @@ export function formatMachineResult(result, { timeZone = 'Asia/Ho_Chi_Minh' } = 
   return packTelegramBlocks(headerLines.join('\n'), blocks);
 }
 
-export function telegramHelpText() {
-  return [
-    'Gửi mã máy để cập nhật tài khoản trong Google Sheet.',
-    '',
-    'Ví dụ: M001 hoặc /machine M001',
-    'Mã máy không phân biệt chữ hoa/chữ thường.',
-    'Các dòng có Tình trạng “BỊ BAN” hoặc “Outr beta” sẽ không được cập nhật và không xuất hiện trong kết quả.',
-  ].join('\n');
-}
-
 export function formatMachineError(error, machine) {
   const messages = {
     MACHINE_NOT_FOUND: `Không tìm thấy máy ${machine} trong sheet.`,

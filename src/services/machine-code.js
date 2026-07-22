@@ -18,22 +18,13 @@ export function normalizeMachineCode(value) {
   return MACHINE_CODE_PATTERN.test(normalized) ? normalized : null;
 }
 
-/** Parse tin nhắn Telegram thành help, machine hoặc invalid. */
+/** Chỉ chấp nhận mã máy thuần; mọi command/nội dung khác đều invalid. */
 export function parseTelegramText(value) {
   if (typeof value !== 'string' || value.length > 128) {
     return { kind: 'invalid' };
   }
 
-  const text = normalizeUnicode(value).trim();
-  if (/^\/(?:start|help)(?:@[A-Za-z0-9_]+)?$/i.test(text)) {
-    return { kind: 'help' };
-  }
-
-  const machineCommand = text.match(
-    /^\/machine(?:@[A-Za-z0-9_]+)?\s+(.+)$/i,
-  );
-  const candidate = machineCommand ? machineCommand[1] : text;
-  const machine = normalizeMachineCode(candidate);
+  const machine = normalizeMachineCode(value);
   return machine ? { kind: 'machine', machine } : { kind: 'invalid' };
 }
 

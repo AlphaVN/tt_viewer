@@ -4,10 +4,10 @@ import { TelegramApiClient } from './telegram-api.js';
 import {
   formatMachineError,
   formatMachineResult,
-  telegramHelpText,
 } from './telegram-format.js';
 
 const UPDATE_TTL_MS = 10 * 60 * 1000;
+const MAX_PENDING_JOBS = 20;
 
 export class TelegramBotProcessor {
   constructor({ config, telegramClient, appsScriptClient, now = Date.now }) {
@@ -17,6 +17,7 @@ export class TelegramBotProcessor {
     this.now = now;
     this.processedUpdates = new Map();
     this.inFlightMachines = new Set();
+    this.inFlightUsers = new Set();
     this.jobTail = Promise.resolve();
     this.pendingJobs = 0;
   }
@@ -38,6 +39,10 @@ export class TelegramBotProcessor {
   isAuthorized(message) {
     const userId = String(message?.from?.id ?? '');
     const chatId = String(message?.chat?.id ?? '');
+    if (!userId || !chatId) return false;
+    // Public mode vẫn bị giới hạn bởi privateOnly ở processUpdate(). Hai
+    // allowlist được bỏ qua có chủ đích để mọi Telegram user dùng private chat.
+    if (this.config.allowAllUsers) return true;
     if (!this.config.allowedUserIds.has(userId)) return false;
     if (
       this.config.allowedChatIds.size &&
@@ -76,8 +81,8 @@ export class TelegramBotProcessor {
     const chatId = String(message.chat.id);
 
     if (!this.isAuthorized(message)) {
-      // Bot nội bộ: silent-drop để người lạ không thể dùng bot làm nguồn spam
-      // outbound hoặc dò cấu hình allowlist.
+      // Allowlist mode: silent-drop để người lạ không thể dùng bot làm nguồn
+      // spam outbound hoặc dò cấu hình quyền truy cập.
       return;
     }
     if (this.config.privateOnly && message.chat.type !== 'private') {
@@ -89,15 +94,8 @@ export class TelegramBotProcessor {
     }
 
     const parsed = parseTelegramText(message.text);
-    if (parsed.kind === 'help') {
-      await this.telegramClient.sendMessage(chatId, telegramHelpText());
-      return;
-    }
     if (parsed.kind !== 'machine') {
-      await this.telegramClient.sendMessage(
-        chatId,
-        `Mã máy không hợp lệ.\n\n${telegramHelpText()}`,
-      );
+      await this.telegramClient.sendMessage(chatId, '❌ Yêu cầu không hợp lệ.');
       return;
     }
 
@@ -109,8 +107,24 @@ export class TelegramBotProcessor {
       );
       return;
     }
+    const userId = String(message.from.id);
+    if (this.inFlightUsers.has(userId)) {
+      await this.telegramClient.sendMessage(
+        chatId,
+        '⏳ Bạn đã có một yêu cầu đang chạy hoặc chờ. Vui lòng đợi kết quả.',
+      );
+      return;
+    }
+    if (this.pendingJobs >= MAX_PENDING_JOBS) {
+      await this.telegramClient.sendMessage(
+        chatId,
+        '⏳ Hệ thống đang có quá nhiều yêu cầu. Vui lòng thử lại sau.',
+      );
+      return;
+    }
 
     this.inFlightMachines.add(machine);
+    this.inFlightUsers.add(userId);
     const queueSlot = this.reserveSerialJob();
     try {
       if (queueSlot.jobsAhead > 0) {
@@ -143,6 +157,7 @@ export class TelegramBotProcessor {
     } finally {
       queueSlot.release();
       this.inFlightMachines.delete(machine);
+      this.inFlightUsers.delete(userId);
     }
   }
 }

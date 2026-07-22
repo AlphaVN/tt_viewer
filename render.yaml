@@ -12,6 +12,8 @@ services:
         sync: false
       - key: TELEGRAM_WEBHOOK_SECRET
         sync: false
+      - key: TELEGRAM_ALLOW_ALL_USERS
+        value: true
       - key: TELEGRAM_ALLOWED_USER_IDS
         sync: false
       - key: TELEGRAM_ALLOWED_CHAT_IDS

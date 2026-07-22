@@ -3,7 +3,8 @@
 Tài liệu này áp dụng cho Google Sheet `QUẢN LÝ TK TT GIANG`, tab `Accounts`,
 và mã nguồn trong repository này.
 
-Khi người dùng được cấp quyền gửi `M001`, `m001` hoặc `/machine M001`, bot sẽ:
+Khi bất kỳ người dùng nào gửi riêng một mã máy hợp lệ như `M001` hoặc `m001`
+trong private chat, bot sẽ:
 
 1. tìm động các dòng có cột J (`Máy`) bằng `M001`;
 2. bỏ qua từng dòng có cột I (`Tình trạng`) là `BỊ BAN` hoặc `Outr beta`;
@@ -33,6 +34,14 @@ Bot không cần sheet ở chế độ public. Apps Script Web App chạy bằng
 khoản deploy khi chọn **Execute as Me**; tài khoản này phải còn quyền truy cập
 sheet. Server gọi Web App qua request được ký HMAC.
 
+### Bot Telegram đang ở chế độ public
+
+`TELEGRAM_ALLOW_ALL_USERS=true` cho phép mọi Telegram user dùng bot trong
+private chat. Họ có thể đoán mã máy và xem username/thống kê được bot trả về,
+đồng thời tiêu tốn quota Apps Script/TikTok. Bot vẫn không đọc/trả L:N, vẫn lọc
+`BỊ BAN`/`Outr beta`, giới hạn một job mỗi user, tối đa 20 job và xử lý tuần tự.
+Chỉ bật chế độ này khi bạn chấp nhận phạm vi truy cập trên.
+
 ### Không dùng cột R làm trạng thái API
 
 Header thật của cột R là `Chủ đề`. Script cũ trong repository từng coi R là
@@ -57,7 +66,7 @@ Telegram
   │ HTTPS webhook + secret header
   ▼
 Node.js/Express trên Render
-  │ kiểm tra user_id, private chat, chống update trùng
+  │ public user, chỉ private chat, chống update trùng/spam hàng đợi
   │ HMAC-SHA256 + timestamp + nonce
   ▼
 Google Apps Script Web App /exec
@@ -120,22 +129,22 @@ Các file chính:
    source code, ảnh chụp màn hình hoặc commit Git.
 5. Khuyến nghị vào `/mybots` > chọn bot > **Bot Settings** > **Allow Groups?**
    và tắt group. Code cũng mặc định chỉ cho phép private chat.
-6. Có thể khai báo command trong **Edit Commands**:
-
-```text
-start - Hướng dẫn sử dụng
-help - Hướng dẫn sử dụng
-machine - Cập nhật theo mã máy, ví dụ /machine M001
-```
+6. Không khai báo command để bot không hiển thị hướng dẫn sử dụng. Nếu trước đó
+   đã khai báo, gửi `/deletecommands` cho BotFather, chọn bot và xác nhận xóa
+   command. Code cố ý từ chối `/start`, `/help`, `/machine ...` và chỉ trả lỗi
+   chung, không tiết lộ định dạng hợp lệ.
 
 Telegram hướng dẫn tạo token bằng `/newbot` và yêu cầu coi token như mật khẩu
 tại [Telegram Bot Tutorial](https://core.telegram.org/bots/tutorial).
 
-## 6. Lấy Telegram user_id được phép
+## 6. Lấy Telegram user_id (chỉ khi dùng allowlist)
+
+Với `TELEGRAM_ALLOW_ALL_USERS=true`, bỏ qua mục này. Nếu sau này chuyển flag về
+`false`, thực hiện các bước dưới đây để lập allowlist.
 
 Thực hiện bước này trước khi đăng ký webhook:
 
-1. mở bot vừa tạo và gửi `/start`;
+1. mở bot vừa tạo và gửi một tin nhắn bất kỳ;
 2. tạo `.env` local nếu chưa có và điền duy nhất `TELEGRAM_BOT_TOKEN` trước:
 
 ```bash
@@ -152,13 +161,13 @@ npm run telegram:get-ids
 Không dùng Telegram username (`@ten`) làm quyền truy cập vì username có thể đổi.
 Code kiểm tra ID số từ payload Telegram.
 
-Nên dùng bot mới và bảo đảm chỉ bạn gửi `/start` trước lần chạy helper.
+Nên dùng bot mới và bảo đảm chỉ bạn gửi tin nhắn trước lần chạy helper.
 Nếu helper in nhiều ID không xác định được, không copy đoán một ID vào
 allowlist; hãy xóa pending update hoặc tạo bot/token mới rồi gửi lại.
 
 Sau khi webhook đã được đăng ký, Telegram không cho dùng `getUpdates` đồng thời.
-Nếu cần lấy lại ID, tạm chạy `npm run telegram:delete-webhook`, gửi `/start`, rồi
-chạy lại `npm run telegram:get-ids`.
+Nếu cần lấy lại ID, tạm chạy `npm run telegram:delete-webhook`, gửi một tin nhắn,
+rồi chạy lại `npm run telegram:get-ids`.
 
 ## 7. Tạo hai secret khác nhau
 
@@ -284,7 +293,8 @@ NODE_ENV=development
 
 TELEGRAM_BOT_TOKEN=token_từ_BotFather
 TELEGRAM_WEBHOOK_SECRET=secret_thứ_nhất
-TELEGRAM_ALLOWED_USER_IDS=123456789
+TELEGRAM_ALLOW_ALL_USERS=true
+TELEGRAM_ALLOWED_USER_IDS=
 TELEGRAM_ALLOWED_CHAT_IDS=
 TELEGRAM_PRIVATE_ONLY=true
 TELEGRAM_TIME_ZONE=Asia/Ho_Chi_Minh
@@ -297,7 +307,8 @@ PUBLIC_BASE_URL=https://ten-service-cua-ban.onrender.com
 TELEGRAM_DROP_PENDING_UPDATES=false
 ```
 
-Nếu có nhiều người được phép, ngăn cách ID bằng dấu phẩy:
+Khi muốn quay lại allowlist, đặt `TELEGRAM_ALLOW_ALL_USERS=false` và ngăn
+cách các ID được phép bằng dấu phẩy:
 
 ```dotenv
 TELEGRAM_ALLOWED_USER_IDS=123456789,987654321
@@ -305,10 +316,11 @@ TELEGRAM_ALLOWED_USER_IDS=123456789,987654321
 
 Quy tắc quyền:
 
-- `TELEGRAM_ALLOWED_USER_IDS` là bắt buộc;
-- nếu `TELEGRAM_ALLOWED_CHAT_IDS` có giá trị, cả user ID và chat ID đều phải
-  khớp;
-- `TELEGRAM_PRIVATE_ONLY=true` chặn group ngay cả khi user được cấp quyền;
+- `TELEGRAM_ALLOW_ALL_USERS=true` bỏ qua cả hai allowlist;
+- public mode bắt buộc `TELEGRAM_PRIVATE_ONLY=true`; cấu hình public + group
+  sẽ làm module tự vô hiệu hóa;
+- khi flag là `false`, `TELEGRAM_ALLOWED_USER_IDS` là bắt buộc; nếu
+  `TELEGRAM_ALLOWED_CHAT_IDS` có giá trị thì cả hai ID phải khớp;
 - không commit `.env`; repository đã ignore file này.
 
 Chạy kiểm thử:
@@ -340,8 +352,9 @@ Repository đã có `render.yaml`. Với Render Blueprint hoặc service hiện 
 | --- | --- | --- |
 | TELEGRAM_BOT_TOKEN | Có | Token BotFather |
 | TELEGRAM_WEBHOOK_SECRET | Có | Secret thứ nhất |
-| TELEGRAM_ALLOWED_USER_IDS | Có | Danh sách ID số |
-| TELEGRAM_ALLOWED_CHAT_IDS | Không | Để trống nếu chỉ khóa theo user |
+| TELEGRAM_ALLOW_ALL_USERS | Có | `true` để mọi user private chat được dùng |
+| TELEGRAM_ALLOWED_USER_IDS | Không khi public | Fallback khi flag là `false` |
+| TELEGRAM_ALLOWED_CHAT_IDS | Không khi public | Fallback khi flag là `false` |
 | TELEGRAM_PRIVATE_ONLY | Có | `true` |
 | TELEGRAM_TIME_ZONE | Có | `Asia/Ho_Chi_Minh` |
 | APPS_SCRIPT_WEB_APP_URL | Có | URL `/exec` |
@@ -357,8 +370,9 @@ Sau deploy, mở:
 https://ten-service-cua-ban.onrender.com/health
 ```
 
-Phải nhận JSON có `status: "ok"` và `telegram.configured: true` trước khi đăng ký
-webhook. Nếu `configured` là `false`, kiểm tra biến môi trường và Render log.
+Phải nhận JSON có `status: "ok"`, `telegram.configured: true`,
+`telegram.accessMode: "public"` và `telegram.privateOnly: true` trước khi đăng
+ký webhook. Nếu khác, kiểm tra biến môi trường và Render log.
 
 ## 12. Đăng ký webhook Telegram
 
@@ -370,7 +384,7 @@ npm run telegram:set-webhook
 ```
 
 Lần đăng ký đầu tiên, sau khi đã lấy đúng ID và không cần giữ các
-message cũ (`/start` hoặc lệnh test), nên xóa backlog có chủ ý:
+message cũ (tin nhắn lấy ID hoặc lệnh test), nên xóa backlog có chủ ý:
 
 ```bash
 TELEGRAM_DROP_PENDING_UPDATES=true npm run telegram:set-webhook
@@ -403,12 +417,14 @@ Nên thử trước trên bản copy của sheet.
 ### Test cơ bản
 
 1. Mở private chat với bot.
-2. Gửi `/start`; bot phải trả hướng dẫn.
-3. Gửi `m001`; bot phải chuẩn hóa thành M001.
-4. Bot trả ngay tin `Đang cập nhật...`.
-5. Sau khi Apps Script chạy xong, bot trả thống kê account.
-6. Kiểm tra C:G, T:AW và AX của các dòng M001 trong sheet.
-7. Kiểm tra cột R không thay đổi.
+2. Gửi `/help`, `/start` và `/machine M001`; mỗi tin chỉ được trả
+   `❌ Yêu cầu không hợp lệ.` và không được gọi Apps Script/TikTok API.
+3. Gửi `M001 extra`; bot phải trả cùng lỗi chung và không gọi API.
+4. Gửi `m001`; bot phải chuẩn hóa thành M001.
+5. Bot trả ngay tin `Đang cập nhật...`.
+6. Sau khi Apps Script chạy xong, bot trả thống kê account.
+7. Kiểm tra C:G, T:AW và AX của các dòng M001 trong sheet.
+8. Kiểm tra cột R không thay đổi.
 
 ### Test máy có cả account hợp lệ và bị loại
 
@@ -425,9 +441,11 @@ snapshot hiện tại chưa có trạng thái này.
 
 ### Test quyền và lỗi input
 
-- tài khoản Telegram không nằm trong allowlist phải bị bỏ qua im lặng;
-- group phải bị từ chối khi `TELEGRAM_PRIVATE_ONLY=true`;
-- `M1`, `M001 extra`, `BỊ BAN` phải bị báo sai định dạng;
+- một tài khoản Telegram bất kỳ trong private chat phải dùng được bot;
+- group vẫn phải bị từ chối khi `TELEGRAM_PRIVATE_ONLY=true`;
+- mỗi user chỉ được có một job đang chạy/chờ; job thứ hai phải được yêu cầu đợi;
+- `/help`, `/start`, `/machine M001`, `M1`, `M001 extra`, `BỊ BAN` chỉ được trả
+  lỗi chung và tuyệt đối không gọi Apps Script/TikTok API;
 - một mã hợp lệ nhưng chưa tồn tại, ví dụ M999999, phải báo không tìm thấy;
 - gửi hai lần cùng update không được tạo hai lần cập nhật đồng thời.
 
@@ -476,7 +494,7 @@ việc cập nhật và kết quả Telegram có thể lệch nhau.
 | Bot không phản hồi | Webhook chưa đăng ký hoặc Render chưa chạy | Mở `/health`, chạy lại `npm run telegram:set-webhook`, xem `Last error` |
 | Webhook trả 503 | Thiếu/sai env làm Telegram module không khởi tạo | Kiểm tra toàn bộ biến Render rồi redeploy/restart |
 | Webhook trả 401 | `TELEGRAM_WEBHOOK_SECRET` trên Render khác secret đã set | Đồng bộ giá trị rồi set webhook lại |
-| User hợp lệ gửi nhưng bot im lặng | Sai `TELEGRAM_ALLOWED_USER_IDS` hoặc chat ID; user ngoài allowlist luôn bị silent-drop | Chạy lại `telegram:get-ids`; không dùng username Telegram |
+| User private gửi nhưng bot im lặng | Render chưa có `TELEGRAM_ALLOW_ALL_USERS=true`, chưa redeploy hoặc đang ở allowlist mode | Kiểm tra `/health` có `accessMode: public`; cập nhật env Render rồi redeploy |
 | Bot báo cấu hình Apps Script | Thiếu Script Property, sai header/tab hoặc AX đã được dùng | Chạy `verifyTelegramBridgeSetup`, xem Executions trong Apps Script |
 | Apps Script trả HTML/không hợp lệ | Dùng URL `/dev`, deployment không cho Anyone, hoặc URL sai | Copy đúng deployed URL `/exec` và cập nhật Render |
 | Bot báo BUSY | onOpen/onEdit, instance server khác hoặc request ngoài queue Node đang giữ ScriptLock | Chờ tiến trình kia xong rồi gửi lại |
@@ -554,13 +572,14 @@ chạy `TELEGRAM_DROP_PENDING_UPDATES=true npm run telegram:delete-webhook`.
 - [ ] Sheet đã Restricted và credential từng public đã được đổi/revoke.
 - [ ] Có backup và đã kiểm tra cột R.
 - [ ] BotFather token chỉ nằm trong secret/env.
-- [ ] `TELEGRAM_ALLOWED_USER_IDS` chỉ chứa người được phép.
+- [ ] Render có `TELEGRAM_ALLOW_ALL_USERS=true`, `TELEGRAM_PRIVATE_ONLY=true`.
 - [ ] Hai secret khác nhau, mỗi secret đủ dài.
 - [ ] `verifyTelegramBridgeSetup` chạy thành công; AX1 đúng, R1 không đổi.
 - [ ] Apps Script deploy “Execute as me”, URL production kết thúc `/exec`.
-- [ ] Render `/health` trả `status: ok` và `telegram.configured: true`.
+- [ ] Render `/health` trả `telegram.configured: true`, `accessMode: public`,
+      `privateOnly: true`.
 - [ ] `npm test` pass.
 - [ ] `npm run telegram:set-webhook` không báo Last error.
 - [ ] Test M001 pass.
 - [ ] Test máy hỗn hợp như M004 không cập nhật/trả account bị loại.
-- [ ] Test user trái phép bị silent-drop và group bị chặn.
+- [ ] Test một user bất kỳ dùng được private chat và group vẫn bị chặn.

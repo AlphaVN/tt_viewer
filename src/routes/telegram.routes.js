@@ -17,6 +17,7 @@ export function createTelegramRouter(options = {}) {
   const envConfigurationAttempted = [
     'TELEGRAM_BOT_TOKEN',
     'TELEGRAM_WEBHOOK_SECRET',
+    'TELEGRAM_ALLOW_ALL_USERS',
     'TELEGRAM_ALLOWED_USER_IDS',
     'APPS_SCRIPT_WEB_APP_URL',
     'TELEGRAM_APPS_SCRIPT_SECRET',
@@ -42,6 +43,7 @@ export function createTelegramRouter(options = {}) {
       config.webhookSecret ||
       config.appsScriptUrl ||
       config.appsScriptSecret ||
+      config.allowAllUsers ||
       config.allowedUserIds?.size,
   );
   if ((!config.enabled || initializationError) && configurationAttempted) {
@@ -51,6 +53,8 @@ export function createTelegramRouter(options = {}) {
   }
   router.runtimeStatus = Object.freeze({
     configured: Boolean(config.enabled && !initializationError && processor),
+    accessMode: config.allowAllUsers ? 'public' : 'allowlist',
+    privateOnly: config.privateOnly !== false,
   });
 
   const webhookLimiter = rateLimit({

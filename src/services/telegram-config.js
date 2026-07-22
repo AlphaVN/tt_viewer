@@ -39,6 +39,7 @@ export function loadTelegramConfig(env = process.env) {
   const appsScriptSecret = String(env.TELEGRAM_APPS_SCRIPT_SECRET || '');
   const allowedUserIds = parseIdSet(env.TELEGRAM_ALLOWED_USER_IDS);
   const allowedChatIds = parseIdSet(env.TELEGRAM_ALLOWED_CHAT_IDS);
+  const allowAllUsers = parseBoolean(env.TELEGRAM_ALLOW_ALL_USERS, false);
   const privateOnly = parseBoolean(env.TELEGRAM_PRIVATE_ONLY, true);
   const timeoutMs = parseTimeout(env.APPS_SCRIPT_TIMEOUT_MS);
   const timeZone = String(env.TELEGRAM_TIME_ZONE || 'Asia/Ho_Chi_Minh').trim();
@@ -48,7 +49,9 @@ export function loadTelegramConfig(env = process.env) {
   if (!webhookSecret) missing.push('TELEGRAM_WEBHOOK_SECRET');
   if (!appsScriptUrl) missing.push('APPS_SCRIPT_WEB_APP_URL');
   if (!appsScriptSecret) missing.push('TELEGRAM_APPS_SCRIPT_SECRET');
-  if (!allowedUserIds.size) missing.push('TELEGRAM_ALLOWED_USER_IDS');
+  if (!allowAllUsers && !allowedUserIds.size) {
+    missing.push('TELEGRAM_ALLOWED_USER_IDS');
+  }
 
   const enabled = missing.length === 0;
   const validationErrors = [];
@@ -60,6 +63,11 @@ export function loadTelegramConfig(env = process.env) {
   if (appsScriptSecret && appsScriptSecret.length < 32) {
     validationErrors.push(
       'TELEGRAM_APPS_SCRIPT_SECRET phải có ít nhất 32 ký tự.',
+    );
+  }
+  if (allowAllUsers && !privateOnly) {
+    validationErrors.push(
+      'Public mode bắt buộc TELEGRAM_PRIVATE_ONLY=true để không mở bot trong group.',
     );
   }
 
@@ -75,6 +83,7 @@ export function loadTelegramConfig(env = process.env) {
     appsScriptTimeoutMs: timeoutMs,
     allowedUserIds,
     allowedChatIds,
+    allowAllUsers,
     privateOnly,
     timeZone,
   };

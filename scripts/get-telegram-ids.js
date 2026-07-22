@@ -39,7 +39,7 @@ if (!/^\d+:[A-Za-z0-9_-]+$/.test(token)) {
       }
 
       if (!identities.size) {
-        console.log('Chưa có update. Hãy gửi /start cho bot rồi chạy lại lệnh.');
+        console.log('Chưa có update. Hãy gửi một tin nhắn cho bot rồi chạy lại lệnh.');
       } else {
         console.log('Các ID tìm thấy (không in nội dung tin nhắn):');
         console.log(JSON.stringify([...identities.values()], null, 2));

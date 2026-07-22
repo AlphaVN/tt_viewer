@@ -48,17 +48,24 @@ test('normalizes current and future machine codes without hard-coding the list',
   }
 });
 
-test('parses plain machine text and /machine command', () => {
+test('parses only a bare machine code and rejects Telegram commands', () => {
   assert.deepEqual(parseTelegramText('M001'), {
     kind: 'machine',
     machine: 'M001',
   });
-  assert.deepEqual(parseTelegramText('/machine@my_bot m014'), {
+  assert.deepEqual(parseTelegramText(' m014 '), {
     kind: 'machine',
     machine: 'M014',
   });
-  assert.deepEqual(parseTelegramText('/help'), { kind: 'help' });
-  assert.deepEqual(parseTelegramText('M001 extra'), { kind: 'invalid' });
+  for (const invalid of [
+    '/help',
+    '/start',
+    '/machine M001',
+    '/machine@my_bot M001',
+    'M001 extra',
+  ]) {
+    assert.deepEqual(parseTelegramText(invalid), { kind: 'invalid' }, invalid);
+  }
 });
 
 test('HMAC matches the cross-runtime Apps Script test vector', () => {
@@ -210,8 +217,50 @@ test('loads private-only Telegram allowlists as string IDs', () => {
   assert.equal(config.enabled, true);
   assert.deepEqual([...config.allowedUserIds], ['123', '456']);
   assert.deepEqual([...config.allowedChatIds], ['-10001']);
+  assert.equal(config.allowAllUsers, false);
   assert.equal(config.privateOnly, true);
   assert.equal(config.botId, '123456');
+});
+
+test('enables explicit public mode without Telegram allowlists', () => {
+  const config = loadTelegramConfig({
+    TELEGRAM_BOT_TOKEN: '123456:token_value',
+    TELEGRAM_WEBHOOK_SECRET: 'webhook_secret_value_123456789012',
+    TELEGRAM_ALLOW_ALL_USERS: 'true',
+    TELEGRAM_PRIVATE_ONLY: 'true',
+    APPS_SCRIPT_WEB_APP_URL:
+      'https://script.google.com/macros/s/deployment-id/exec',
+    TELEGRAM_APPS_SCRIPT_SECRET: 's'.repeat(32),
+  });
+  assert.equal(config.enabled, true);
+  assert.equal(config.allowAllUsers, true);
+  assert.deepEqual([...config.allowedUserIds], []);
+  assert.deepEqual(config.missing, []);
+});
+
+test('keeps allowlist required by default and forces public mode to private chat', () => {
+  const base = {
+    TELEGRAM_BOT_TOKEN: '123456:token_value',
+    TELEGRAM_WEBHOOK_SECRET: 'webhook_secret_value_123456789012',
+    APPS_SCRIPT_WEB_APP_URL:
+      'https://script.google.com/macros/s/deployment-id/exec',
+    TELEGRAM_APPS_SCRIPT_SECRET: 's'.repeat(32),
+  };
+  const allowlistMode = loadTelegramConfig(base);
+  assert.equal(allowlistMode.enabled, false);
+  assert.ok(allowlistMode.missing.includes('TELEGRAM_ALLOWED_USER_IDS'));
+
+  const publicGroupMode = loadTelegramConfig({
+    ...base,
+    TELEGRAM_ALLOW_ALL_USERS: 'true',
+    TELEGRAM_PRIVATE_ONLY: 'false',
+  });
+  assert.equal(publicGroupMode.enabled, false);
+  assert.match(publicGroupMode.validationErrors.join(' '), /private/i);
+  assert.throws(
+    () => loadTelegramConfig({ ...base, TELEGRAM_ALLOW_ALL_USERS: 'maybe' }),
+    /boolean/i,
+  );
 });
 
 test('does not enable Telegram with a weak webhook secret', () => {
@@ -274,6 +323,7 @@ test('formats many Unicode accounts into safe Telegram-sized blocks', () => {
 function makeProcessorConfig(overrides = {}) {
   return {
     botId: '123456',
+    allowAllUsers: false,
     allowedUserIds: new Set(['42']),
     allowedChatIds: new Set(),
     privateOnly: true,
@@ -363,6 +413,108 @@ test('processor silently drops unauthorized users and rejects groups', async () 
   assert.match(sent[0], /trò chuyện riêng/i);
 });
 
+test('invalid text returns a generic error without calling Apps Script', async () => {
+  const calls = [];
+  const sent = [];
+  const processor = new TelegramBotProcessor({
+    config: makeProcessorConfig({ allowAllUsers: true }),
+    telegramClient: {
+      async sendMessage(_chatId, text) {
+        sent.push(text);
+      },
+    },
+    appsScriptClient: {
+      async refreshMachine(machine) {
+        calls.push(machine);
+        return {
+          machine,
+          matched: 0,
+          eligible: 0,
+          updated: 0,
+          notFound: 0,
+          failed: 0,
+          excluded: 0,
+          missingUsername: 0,
+          skippedDuringRun: 0,
+          accounts: [],
+          updatedAt: '2026-07-22T10:00:00.000Z',
+          replayed: false,
+        };
+      },
+    },
+  });
+
+  const invalidMessages = [
+    '/help',
+    '/start',
+    '/machine M001',
+    'M001 extra',
+    'xin chào',
+  ];
+  for (const [index, text] of invalidMessages.entries()) {
+    await processor.processUpdate(
+      makeUpdate({ updateId: 1000 + index, userId: 99, text }),
+    );
+  }
+
+  assert.deepEqual(calls, []);
+  assert.deepEqual(
+    sent,
+    invalidMessages.map(() => '❌ Yêu cầu không hợp lệ.'),
+  );
+  assert.doesNotMatch(sent.join('\n'), /M\d|Google Sheet|\/machine/i);
+
+  await processor.processUpdate(
+    makeUpdate({ updateId: 1010, userId: 99, text: 'M002' }),
+  );
+  assert.deepEqual(calls, ['M002']);
+});
+
+test('public mode accepts every private user but still rejects groups', async () => {
+  const calls = [];
+  const sent = [];
+  const processor = new TelegramBotProcessor({
+    config: makeProcessorConfig({
+      allowAllUsers: true,
+      allowedUserIds: new Set(),
+      allowedChatIds: new Set(['42']),
+    }),
+    telegramClient: {
+      async sendMessage(_chatId, text) {
+        sent.push(text);
+      },
+    },
+    appsScriptClient: {
+      async refreshMachine(machine) {
+        calls.push(machine);
+        return {
+          machine,
+          matched: 1,
+          eligible: 1,
+          updated: 1,
+          notFound: 0,
+          failed: 0,
+          excluded: 0,
+          missingUsername: 0,
+          skippedDuringRun: 0,
+          accounts: [],
+          updatedAt: '2026-07-22T10:00:00.000Z',
+          replayed: false,
+        };
+      },
+    },
+  });
+
+  await processor.processUpdate(makeUpdate({ updateId: 22, userId: 99 }));
+  await processor.processUpdate(
+    makeUpdate({ updateId: 23, userId: 100, chatType: 'group' }),
+  );
+
+  assert.deepEqual(calls, ['M001']);
+  assert.ok(sent.some(text => /M001/.test(text)));
+  assert.ok(sent.some(text => /trò chuyện riêng/i.test(text)));
+});
+
 test('processor serializes different machines before calling Apps Script', async () => {
   const calls = [];
   const sent = [];
@@ -391,7 +543,9 @@ test('processor serializes different machines before calling Apps Script', async
     },
   };
   const processor = new TelegramBotProcessor({
-    config: makeProcessorConfig(),
+    config: makeProcessorConfig({
+      allowedUserIds: new Set(['42', '43']),
+    }),
     telegramClient: {
       async sendMessage(_chatId, text) {
         sent.push(text);
@@ -402,7 +556,9 @@ test('processor serializes different machines before calling Apps Script', async
 
   const first = processor.processUpdate(makeUpdate({ updateId: 30, text: 'M001' }));
   await new Promise(resolve => setImmediate(resolve));
-  const second = processor.processUpdate(makeUpdate({ updateId: 31, text: 'M002' }));
+  const second = processor.processUpdate(
+    makeUpdate({ updateId: 31, text: 'M002', userId: 43 }),
+  );
   await new Promise(resolve => setImmediate(resolve));
 
   assert.deepEqual(calls, ['M001']);
@@ -410,6 +566,56 @@ test('processor serializes different machines before calling Apps Script', async
   releaseFirst();
   await Promise.all([first, second]);
   assert.deepEqual(calls, ['M001', 'M002']);
+});
+
+test('public mode permits only one queued machine request per user', async () => {
+  const calls = [];
+  const sent = [];
+  let releaseFirst;
+  const firstGate = new Promise(resolve => {
+    releaseFirst = resolve;
+  });
+  const processor = new TelegramBotProcessor({
+    config: makeProcessorConfig({ allowAllUsers: true }),
+    telegramClient: {
+      async sendMessage(_chatId, text) {
+        sent.push(text);
+      },
+    },
+    appsScriptClient: {
+      async refreshMachine(machine) {
+        calls.push(machine);
+        await firstGate;
+        return {
+          machine,
+          matched: 0,
+          eligible: 0,
+          updated: 0,
+          notFound: 0,
+          failed: 0,
+          excluded: 0,
+          missingUsername: 0,
+          skippedDuringRun: 0,
+          accounts: [],
+          updatedAt: '2026-07-22T10:00:00.000Z',
+          replayed: false,
+        };
+      },
+    },
+  });
+
+  const first = processor.processUpdate(
+    makeUpdate({ updateId: 40, userId: 99, text: 'M001' }),
+  );
+  await new Promise(resolve => setImmediate(resolve));
+  await processor.processUpdate(
+    makeUpdate({ updateId: 41, userId: 99, text: 'M002' }),
+  );
+
+  assert.deepEqual(calls, ['M001']);
+  assert.ok(sent.some(text => /Bạn đã có một yêu cầu/.test(text)));
+  releaseFirst();
+  await first;
 });
 
 test('Telegram API retries a 429 and protects result messages', async () => {
