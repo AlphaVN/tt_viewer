@@ -559,6 +559,14 @@ test('Apps Script files parse and protect the real Chủ đề column', async ()
   assert.match(bridgeSource, /TELEGRAM_MAX_PROPERTY_VALUE_BYTES\s*=\s*8000/);
   assert.match(bridgeSource, /result:\s*safeResult/);
   assert.doesNotMatch(bridgeSource, /function readMachineSnapshot/);
+  assert.match(
+    bridgeSource,
+    /Utilities\.newBlob\(payloadBytes\)\.getDataAsString\(\)/,
+  );
+  assert.doesNotMatch(
+    bridgeSource,
+    /getDataAsString\(Utilities\.Charset\.UTF_8\)/,
+  );
 
   const { sanitizeDurableTelegramResult } = new Function(
     `${fetchSource}\n${bridgeSource}\nreturn { sanitizeDurableTelegramResult };`,

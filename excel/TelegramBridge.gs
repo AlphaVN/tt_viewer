@@ -157,8 +157,10 @@ function parseAndVerifyTelegramRequest(e) {
     var payloadBytes = Utilities.base64DecodeWebSafe(
       telegramPadBase64(encodedPayload),
     );
-    var payloadText = Utilities.newBlob(payloadBytes)
-      .getDataAsString(Utilities.Charset.UTF_8);
+    // Blob#getDataAsString() mặc định là UTF-8. Không truyền
+    // Utilities.Charset.UTF_8 vì overload này của Apps Script nhận String,
+    // không nhận Charset enum và sẽ ném lỗi INVALID_REQUEST ở runtime thật.
+    var payloadText = Utilities.newBlob(payloadBytes).getDataAsString();
     payload = JSON.parse(payloadText);
   } catch (payloadError) {
     throw telegramBridgeError("INVALID_REQUEST");
